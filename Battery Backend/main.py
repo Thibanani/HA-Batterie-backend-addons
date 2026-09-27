@@ -68,8 +68,7 @@ def init_db():
 
 # ---------------- MQTT (paho-mqtt 1.6.x, API "v1") ----------------
 mqtt_client = mqtt.Client()
-if MQTT_USERNAME:
-    mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
 
 def publish_discovery(client, slug: str):
     device = {
@@ -114,11 +113,13 @@ def publish_discovery(client, slug: str):
         json.dumps(switch_payload), retain=True,
     )
 
+
 def on_connect(client, userdata, flags, rc):
     print(f"MQTT connecte (code {rc})", flush=True)
     for mac, slug in BATTERIES.items():
-        publish_discovery(slug)
+        publish_discovery(client, slug)
         client.subscribe(f"{DISCOVERY_PREFIX}/switch/{slug}_discharge/set")
+
 
 def on_message(client, userdata, msg):
     # L'utilisateur a bascule le switch "decharge" dans Home Assistant.
@@ -136,6 +137,28 @@ def on_message(client, userdata, msg):
     print(f"Commande en attente pour {mac} : {action}", flush=True)
 
 
+def get_all_status():
+    """Renvoie le dernier etat connu de chaque batterie (pour GET /status)."""
+    result = {}
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT mac, voltage, current, soc, soh, discharge_off, updated_at "
+            "FROM battery_state"
+        ).fetchall()
+    for mac, voltage, current, soc, soh, discharge_off, updated_at in rows:
+        slug = BATTERIES.get(mac, mac)
+        result[slug] = {
+            "mac": mac,
+            "voltage_v": voltage,
+            "current_a": current,
+            "soc_pct": soc,
+            "soh_pct": soh,
+            "discharge_off": bool(discharge_off),
+            "updated_at": updated_at,
+        }
+    return result
+
+
 # ---------------- Serveur HTTP ----------------
 class Handler(BaseHTTPRequestHandler):
     def _send_json(self, status: int, payload: dict):
@@ -149,6 +172,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self._send_json(200, {"status": "ok"})
+        elif self.path == "/status":
+            self._send_json(200, get_all_status())
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -214,15 +239,19 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    # setup mqtt
+    if MQTT_USERNAME:
+        mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 
-    # connexion des handler mqtt
     mqtt_client.on_connect = on_connect
     mqtt_client.on_message = on_message
 
+    # connexion au service mqtt
     init_db()
     mqtt_client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     mqtt_client.loop_start()
 
+    # Demarrage du serveur http
     server = ThreadingHTTPServer(("0.0.0.0", 8000), Handler)
     print("Serveur demarre sur le port 8000", flush=True)
     server.serve_forever()

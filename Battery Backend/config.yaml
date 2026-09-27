@@ -1,6 +1,6 @@
 name: "Battery Backend"
 description: "Recoit les rapports de l'ESP32 et publie les batteries dans Home Assistant via MQTT"
-version: "1.0.0"
+version: "1.0.2"
 slug: "battery_backend"
 init: false
 arch:
