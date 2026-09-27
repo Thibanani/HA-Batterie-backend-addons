@@ -29,9 +29,10 @@
 // ---------------- A CONFIGURER ----------------
 static const char* WIFI_SSID     = "TON_HOTSPOT";
 static const char* WIFI_PASSWORD = "TON_MOT_DE_PASSE";
-static const char* SERVER_URL    = "https://batteries.thibaultbansha.ovh/report"; // ou ton backend
+static const char* SERVER_URL    = "https://batteries.thibaultbansha.ovh/report";
+static const char* SERVER_HOST   = "batteries.thibaultbansha.ovh"; // juste le nom d'hote (sans https:// ni chemin), pour le diagnostic DNS
 static const char* BATTERY_MAC   = "AA:BB:CC:DD:EE:FF"; // valeur bidon pour le test
-static const char* API_KEY       = "TON_API_KEY"; // doit correspondre exactement a l'option "api_key" de l'add-on
+static const char* API_KEY       = "change-moi-en-vrai-secret"; // doit correspondre exactement a l'option "api_key" de l'add-on
 
 // Intervalle entre deux envois simules (ms)
 static const uint32_t REPORT_INTERVAL_MS = 30000;
@@ -60,6 +61,8 @@ bool sendReport(float voltage, float current, uint16_t soc, uint16_t soh,
   client.setInsecure(); // OK pour un test rapide ; a remplacer par une
                          // verification de certificat sur le vrai backend.
 
+  Serial.printf("Heap libre avant connexion HTTPS : %u octets\n", ESP.getFreeHeap());
+
   HTTPClient http;
   http.begin(client, SERVER_URL);
   http.addHeader("Content-Type", "application/json");
@@ -82,6 +85,10 @@ bool sendReport(float voltage, float current, uint16_t soc, uint16_t soh,
   Serial.printf("Reponse serveur : code %d\n", statusCode);
   if (statusCode > 0) {
     Serial.println(http.getString());
+  } else {
+    char errBuf[128];
+    client.lastError(errBuf, sizeof(errBuf));
+    Serial.printf("Detail erreur TLS/connexion : %s\n", errBuf);
   }
   http.end();
   return statusCode > 0;
@@ -102,12 +109,36 @@ void connectWiFi() {
   }
 }
 
+// Diagnostic reseau : DNS + test HTTPS vers un hote connu (1.1.1.1),
+// pour isoler si le souci est general au reseau ou specifique a SERVER_HOST.
+void runNetworkDiagnostics() {
+  IPAddress resolvedIP;
+  if (WiFi.hostByName(SERVER_HOST, resolvedIP)) {
+    Serial.print("DNS resolu pour ");
+    Serial.print(SERVER_HOST);
+    Serial.print(" -> ");
+    Serial.println(resolvedIP);
+  } else {
+    Serial.print("Echec de resolution DNS pour ");
+    Serial.println(SERVER_HOST);
+  }
+
+  WiFiClientSecure testClient;
+  testClient.setInsecure();
+  HTTPClient testHttp;
+  testHttp.begin(testClient, "https://1.1.1.1/");
+  int testCode = testHttp.GET();
+  Serial.printf("Test HTTPS generique vers 1.1.1.1 : code %d\n", testCode);
+  testHttp.end();
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
   randomSeed(analogRead(0));
   WiFi.mode(WIFI_STA);
   connectWiFi();
+  runNetworkDiagnostics();
 }
 
 void loop() {
