@@ -1,0 +1,18 @@
+name: "Battery Backend"
+description: "Recoit les rapports de l'ESP32 et publie les batteries dans Home Assistant via MQTT"
+version: "1.0.0"
+slug: "battery_backend"
+init: false
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+ports:
+  8000/tcp: 8000
+options:
+  api_key: "change-moi-en-vrai-secret"
+schema:
+  api_key: str
+services:
+  - "mqtt:want"
