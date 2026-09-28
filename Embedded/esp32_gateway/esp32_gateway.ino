@@ -420,6 +420,8 @@ void runCycle() {
   }
 }
 
+#define uS_TO_mS_FACTOR 1000ULL
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -434,5 +436,7 @@ void loop() {
   Serial.println("\n--- Nouveau cycle ---");
   runCycle();
   Serial.printf("Prochain cycle dans %u s\n", (unsigned)(CYCLE_INTERVAL_MS / 1000));
-  delay(CYCLE_INTERVAL_MS);
+  Serial.flush();
+  esp_sleep_enable_timer_wakeup(CYCLE_INTERVAL_MS * uS_TO_mS_FACTOR);
+  esp_deep_sleep_start();
 }
