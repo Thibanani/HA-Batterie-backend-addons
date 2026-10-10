@@ -17,6 +17,7 @@ extern const size_t        BATTERY_COUNT;
 
 // ---------------- Reglages ----------------
 static const uint32_t CYCLE_INTERVAL_MS      = 60000;  // duree entre deux cycles (test)
+static const uint32_t MAX_CYCLE_DURATION_S   = 180;    // au-dela, le watchdog redemarre la carte
 static const uint32_t BLE_CONNECT_TIMEOUT_MS = 5000;
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
 static const uint32_t HTTP_TIMEOUT_MS        = 10000;  // connexion TCP, negociation TLS et reponse

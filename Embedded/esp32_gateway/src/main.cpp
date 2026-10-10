@@ -26,6 +26,7 @@
  */
 
 #include <Arduino.h>
+#include <esp_task_wdt.h>
 #include "ble_battery.h"
 #include "debug.h"
 #include "network.h"
@@ -87,10 +88,46 @@ void runCycle() {
 
 #define uS_TO_mS_FACTOR 1000ULL
 
+// ---------------- Veille et surveillance ----------------
+[[noreturn]] static void goToSleep() {
+  DEBUG_PRINTF("Prochain cycle dans %u s\n", (unsigned)(CYCLE_INTERVAL_MS / 1000));
+  DEBUG_FLUSH();
+  esp_sleep_enable_timer_wakeup(CYCLE_INTERVAL_MS * uS_TO_mS_FACTOR);
+  esp_deep_sleep_start();
+}
+
+// Un cycle bloque (pile BLE, reseau...) ne doit pas garder l'ESP32 eveille et
+// vider la batterie : au-dela de MAX_CYCLE_DURATION_S, le watchdog redemarre la carte.
+static void armCycleWatchdog() {
+  esp_task_wdt_init(MAX_CYCLE_DURATION_S, true);   // true : redemarrage a l'expiration
+  esp_task_wdt_add(NULL);                          // surveille la tache de setup() / loop()
+}
+
+static bool lastResetWasAbnormal() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_INT_WDT:
+    case ESP_RST_WDT:
+    case ESP_RST_PANIC:
+    case ESP_RST_BROWNOUT:
+      return true;
+    default:
+      return false;
+  }
+}
+
 void setup() {
   DEBUG_BEGIN(115200);
   DEBUG_PRINTLN();
   DEBUG_PRINTLN("=== Passerelle ESP32 <-> batterie BLE <-> serveur ===");
+  armCycleWatchdog();
+
+  // Apres un blocage, un plantage ou une baisse de tension, on attend le cycle
+  // suivant au lieu de recommencer aussitot (pas de boucle de redemarrages).
+  if (lastResetWasAbnormal()) {
+    DEBUG_PRINTF("[CYCLE] Redemarrage anormal (raison %d) : cycle saute.\n", (int)esp_reset_reason());
+    goToSleep();
+  }
 
   // Le reseau n'est plus allume ici : seulement apres les lectures BLE,
   // et uniquement s'il y a quelque chose a envoyer (voir runCycle).
@@ -101,8 +138,5 @@ void loop() {
   DEBUG_PRINTLN("\n--- Nouveau cycle ---");
   runCycle();
   networkStop();
-  DEBUG_PRINTF("Prochain cycle dans %u s\n", (unsigned)(CYCLE_INTERVAL_MS / 1000));
-  DEBUG_FLUSH();
-  esp_sleep_enable_timer_wakeup(CYCLE_INTERVAL_MS * uS_TO_mS_FACTOR);
-  esp_deep_sleep_start();
+  goToSleep();
 }
