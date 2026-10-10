@@ -10,7 +10,10 @@ json, secrets) + paho-mqtt, pour rester leger et eviter toute dependance a
 compiler sur l'image Alpine/ARM de l'add-on.
 
 Variables d'environnement (injectees par run.sh via bashio) :
-  API_KEY, MQTT_HOST, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD, DB_PATH
+  API_KEY, SENSOR_EXPIRE_AFTER, MQTT_HOST, MQTT_PORT, MQTT_USERNAME,
+  MQTT_PASSWORD, DB_PATH
+La liste des batteries est lue dans les options de l'add-on (OPTIONS_PATH,
+/data/options.json par defaut).
 """
 
 import json
@@ -66,12 +69,6 @@ LIMITS = {
     "soh_pct": (0, 100),
 }
 
-# Adapte les adresses MAC et les noms a tes deux batteries reelles.
-BATTERIES = {
-    "AA:BB:CC:DD:EE:FF": "battery_1",
-    "11:22:33:44:55:66": "battery_2",
-}
-
 db_lock = threading.Lock()
 
 # Caracteres de controle echappes dans les logs (anti injection de fausses lignes).
@@ -80,6 +77,49 @@ _LOG_ESCAPES = {c: f"\\x{c:02x}" for c in [*range(32), 127]}
 
 def log(message: str):
     print(message.translate(_LOG_ESCAPES), flush=True)
+
+
+# ---------------- Batteries (option "batteries" de l'add-on) ----------------
+OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")
+# Le nom sert dans les sujets MQTT et les unique_id HA : pas de "/", "#", "+"...
+SLUG_RE = re.compile(r"[a-z0-9_]{1,40}")
+DEFAULT_BATTERIES = {
+    "AA:BB:CC:DD:EE:FF": "battery_1",
+    "11:22:33:44:55:66": "battery_2",
+}
+
+
+def load_batteries(path: str = OPTIONS_PATH) -> dict:
+    """Lit {identifiant: nom} dans les options de l'add-on ; entrees invalides ignorees."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            options = json.load(f)
+        entries = options["batteries"]
+    except FileNotFoundError:
+        log(f"{path} introuvable : batteries par defaut")
+        return dict(DEFAULT_BATTERIES)
+    except (OSError, ValueError, KeyError, TypeError):
+        log(f"Option 'batteries' absente ou illisible dans {path} : batteries par defaut")
+        return dict(DEFAULT_BATTERIES)
+
+    batteries = {}
+    for entry in entries if isinstance(entries, list) else []:
+        battery_id = entry.get("id") if isinstance(entry, dict) else None
+        slug = entry.get("name") if isinstance(entry, dict) else None
+        if not (isinstance(battery_id, str) and BATTERY_ID_RE.fullmatch(battery_id)
+                and isinstance(slug, str) and SLUG_RE.fullmatch(slug)):
+            log(f"Batterie ignoree (id ou name invalide) : {str(entry)[:120]}")
+            continue
+        if battery_id in batteries or slug in batteries.values():
+            log(f"Batterie ignoree (doublon) : {battery_id} / {slug}")
+            continue
+        batteries[battery_id] = slug
+    if not batteries:
+        log("ATTENTION : aucune batterie valide configuree, tous les rapports seront refuses")
+    return batteries
+
+
+BATTERIES = load_batteries()
 
 
 @contextmanager
@@ -502,6 +542,7 @@ def stop_mqtt():
 
 def main():
     check_api_key()
+    log("Batteries : " + (", ".join(f"{slug} ({bid})" for bid, slug in BATTERIES.items()) or "aucune"))
     init_db()
     start_mqtt()
 

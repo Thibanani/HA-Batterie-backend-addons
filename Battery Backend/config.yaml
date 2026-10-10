@@ -14,8 +14,16 @@ ports:
 options:
   api_key: "change-moi-en-vrai-secret"
   sensor_expire_after: 900
+  batteries:
+    - id: "AA:BB:CC:DD:EE:FF"
+      name: "battery_1"
+    - id: "11:22:33:44:55:66"
+      name: "battery_2"
 schema:
   api_key: password
   sensor_expire_after: int(0,86400)
+  batteries:
+    - id: "match(^[A-Za-z0-9:_-]{1,64}$)"
+      name: "match(^[a-z0-9_]{1,40}$)"
 services:
   - "mqtt:want"

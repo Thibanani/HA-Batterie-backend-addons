@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 _TMP = tempfile.TemporaryDirectory()
 os.environ["DB_PATH"] = os.path.join(_TMP.name, "test.db")
 os.environ["API_KEY"] = "cle-de-test-suffisamment-longue"
+os.environ["OPTIONS_PATH"] = os.path.join(_TMP.name, "absent.json")  # -> batteries par defaut
 
 import main  # noqa: E402
 
@@ -386,12 +387,54 @@ class HomeAssistantEntityTests(BackendTestCase):
         self.assertEqual(self.mqtt.published, [])
         self.assertTrue(self.mqtt.disconnected)
 
-    def test_invalid_integer_option_falls_back_to_default(self):
+    def test_invalid_integer_option_falls_back_to_default_value(self):
         os.environ["TEST_ENTIER"] = "null"
         try:
             self.assertEqual(main._int_env("TEST_ENTIER", 900), 900)
         finally:
             del os.environ["TEST_ENTIER"]
+
+
+class BatteryOptionsTests(unittest.TestCase):
+    def load(self, content):
+        path = os.path.join(_TMP.name, "options.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content if isinstance(content, str) else json.dumps(content))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            batteries = main.load_batteries(path)
+        return batteries, out.getvalue()
+
+    def test_batteries_are_read_from_options(self):
+        batteries, _ = self.load({"batteries": [
+            {"id": "60:55:F9:21:CB:A2", "name": "service"},
+            {"id": "60:55:F9:21:CB:A3", "name": "moteur_2"},
+        ]})
+        self.assertEqual(batteries, {"60:55:F9:21:CB:A2": "service", "60:55:F9:21:CB:A3": "moteur_2"})
+
+    def test_invalid_and_duplicate_entries_are_ignored(self):
+        batteries, out = self.load({"batteries": [
+            {"id": "AA:01", "name": "ok"},
+            {"id": "AA:02", "name": "a/b"},          # casserait les sujets MQTT
+            {"id": "AA:03", "name": "#"},
+            {"id": "AA 04", "name": "espace"},
+            {"id": "AA:01", "name": "doublon_id"},
+            {"id": "AA:05", "name": "ok"},           # doublon de nom
+            "pas un objet",
+            {"id": 42, "name": "type"},
+        ]})
+        self.assertEqual(batteries, {"AA:01": "ok"})
+        self.assertEqual(out.count("Batterie ignoree"), 7)
+
+    def test_missing_or_unreadable_options_fall_back_to_defaults(self):
+        self.assertEqual(main.load_batteries(os.path.join(_TMP.name, "nope.json")), main.DEFAULT_BATTERIES)
+        for content in ["{pas du json", {"api_key": "x"}, "[]"]:
+            with self.subTest(content=content):
+                self.assertEqual(self.load(content)[0], main.DEFAULT_BATTERIES)
+
+    def test_empty_list_means_no_battery(self):
+        batteries, out = self.load({"batteries": []})
+        self.assertEqual(batteries, {})
+        self.assertIn("aucune batterie valide", out)
 
 
 if __name__ == "__main__":
