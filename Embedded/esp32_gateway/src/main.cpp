@@ -22,19 +22,19 @@
  *      "AA:BB:CC:DD:EE:FF" pour continuer a alimenter "Batterie 1" dans HA
  *      sans modifier l'add-on.
  *
- * Dependances (Arduino IDE > Gestionnaire de bibliotheques) :
- *   - "NimBLE-Arduino" (auteur h2zero), VERSION 2.x (la derniere proposee).
- *     Le code utilise l'API 2.x ; avec une 1.4 il ne compilera pas.
- *   - "ArduinoJson" (auteur Benoit Blanchon)
- *   HTTPClient et WiFiClientSecure sont fournis avec le coeur ESP32.
+ * Projet PlatformIO : les dependances (NimBLE-Arduino 2.x, ArduinoJson 6.x)
+ * sont declarees dans platformio.ini et installees automatiquement.
+ * Le code utilise l'API NimBLE 2.x ; avec une 1.4 il ne compilera pas.
+ * HTTPClient et WiFiClientSecure sont fournis avec le coeur ESP32.
  */
 
+#include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <NimBLEDevice.h>
-#include "../bms_protocol.h"
+#include "bms_protocol.h"   // Embedded/bms_protocol.h (voir build_flags dans platformio.ini)
 
 // ---------------- A CONFIGURER ----------------
 static const char* WIFI_SSID     = "TON_WIFI";
