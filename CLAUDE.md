@@ -5,23 +5,25 @@ Home Assistant (HTTP → SQLite → MQTT Discovery). **Lire `CONTEXT.md`** pour 
 l'état réel du code, l'historique des branches et la liste des problèmes connus.
 
 L'utilisateur échange en français ; code, commentaires et messages de commit en français.
+Un commit par fonctionnalité.
 
 ## Commandes
 
 ### Backend (`Battery Backend/`)
+Tests (aucun broker MQTT nécessaire, `paho-mqtt==1.6.1` installé) :
 ```bash
-python -m py_compile "Battery Backend/main.py"
+python -m unittest discover -s "Battery Backend/tests" -v
 ```
-Lancement local (PowerShell) — nécessite un broker MQTT sur localhost :
+Lancement local (PowerShell) — l'add-on démarre même sans broker MQTT :
 ```powershell
-$env:API_KEY="change-moi-en-vrai-secret"; $env:MQTT_HOST="localhost"; $env:DB_PATH="./dev_batteries.db"
+$env:API_KEY="une-cle-de-test-tres-longue"; $env:MQTT_HOST="localhost"; $env:DB_PATH="./dev_batteries.db"
 python "Battery Backend\main.py"
 ```
 ```bash
-curl -X POST http://localhost:8000/report -H "Content-Type: application/json" -H "X-API-Key: change-moi-en-vrai-secret" -d '{"battery_mac":"AA:BB:CC:DD:EE:FF","voltage_v":13.25,"current_a":-2.4,"soc_pct":75,"soh_pct":98,"discharge_off":false}'
+curl -X POST http://localhost:8000/report -H "Content-Type: application/json" -H "X-API-Key: une-cle-de-test-tres-longue" -d '{"battery_mac":"AA:BB:CC:DD:EE:FF","voltage_v":13.25,"current_a":-2.4,"soc_pct":75,"soh_pct":98,"discharge_off":false}'
 ```
 Toute modification livrée de l'add-on doit incrémenter `version` dans `Battery Backend/config.yaml`
-(sinon Home Assistant ne propose pas la mise à jour).
+(sinon Home Assistant ne propose pas la mise à jour) et compléter `Battery Backend/CHANGELOG.md`.
 
 ### Passerelle — PlatformIO (`Embedded/esp32_gateway/`)
 PlatformIO CLI : `~/.platformio/penv/Scripts/pio.exe` (pas dans le PATH).
@@ -34,6 +36,9 @@ pio run                                  # env par défaut : lilygo-debug
 pio run -e lilygo-release                # firmware sans traces série
 pio run -e lilygo-debug -t upload && pio device monitor
 ```
+Secrets : copier `include/secrets.example.h` en `include/secrets.h` (ignoré par git) et le remplir.
+Sans ce fichier, la compilation utilise les valeurs factices et l'affiche en avertissement.
+
 ⚠️ **Limite Windows 260 caractères** : depuis un worktree (`.claude/worktrees/...`) les chemins
 de `.pio/libdeps/.../NimBLE-Arduino/...` sont trop longs et la compilation échoue avec des
 « No such file or directory » sur des includes internes. Compiler avec un dossier de travail court :
@@ -55,16 +60,27 @@ Encore des sketches Arduino IDE (`.ino`) ; ils incluent `"../bms_protocol.h"`.
 - **ArduinoJson 6.x** (le code utilise `StaticJsonDocument`, déprécié en v7).
 - `Embedded/bms_protocol.h` est partagé : la passerelle le trouve via `-I ..` (platformio.ini),
   le simulateur via `#include "../bms_protocol.h"`. Toute modification doit rester compatible avec les deux.
-- `reportId` côté passerelle = clé de `BATTERIES` dans `main.py`.
+- `reportId` côté passerelle = `id` d'une entrée de l'option `batteries` de l'add-on.
+- Énergie : ne jamais allumer le réseau sans donnée à envoyer ; tout délai réseau doit être borné
+  (`config.h`) ; tout ce qui doit être éteint avant la veille passe par `networkStop()`.
+- HTTPS : ne pas revenir à `setInsecure()`. Si le serveur change d'autorité de certification,
+  ajouter sa racine dans `src/root_ca.h` (vérifier avec `openssl s_client -showcerts`).
+- Les bornes de validation (tension, courant, SOC/SOH) sont les mêmes dans `config.h` et dans
+  `LIMITS` de `main.py` : les modifier ensemble.
 - Cible matérielle finale : LILYGO T-SIM7080G-S3 — modem TX=GPIO5, RX=GPIO4, PWRKEY=GPIO41 ;
   PMU AXP2101 en I2C SDA=18 / SCL=17 selon la révision.
 
 ### Python (backend)
 - Bibliothèque standard + `paho-mqtt==1.6.1` uniquement (image Alpine ARM, rien à compiler).
-- API paho **v1** (`mqtt.Client()` sans `CallbackAPIVersion`).
+- API paho **v1** (`mqtt.Client()` sans `CallbackAPIVersion`). Tout callback MQTT porte
+  `@mqtt_callback` (une exception non rattrapée arrête la boucle réseau de paho 1.6).
+- Toute donnée reçue (HTTP, MQTT, options) est validée avant usage ; un nom de batterie
+  finit dans des sujets MQTT, d'où `SLUG_RE`.
+- Journaliser avec `log()` (échappe les caractères de contrôle), jamais `print()` direct.
 - Requêtes SQL paramétrées ; tout accès SQLite via `with db() as conn:` (verrou `db_lock`).
 - `ThreadingHTTPServer` : protéger toute structure partagée modifiée à l'exécution.
+- Chaque fonctionnalité arrive avec ses tests dans `tests/test_backend.py`.
 
 ### Secrets
 Ne jamais versionner de vrais secrets (mot de passe WiFi, clé API réelle) : valeurs factices
-`TON_WIFI`, `TON_MOT_DE_PASSE`, `change-moi-en-vrai-secret`.
+`TON_WIFI`, `TON_MOT_DE_PASSE`, `TON_API_KEY`, `change-moi-en-vrai-secret`.

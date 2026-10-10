@@ -2,7 +2,8 @@
 
 > Mémoire de travail pour reprendre le développement rapidement : architecture,
 > état réel du code, choix de conception, problèmes connus et pistes.
-> Base de travail : branche `Reprise_par_Claude` (= commit `085f169`, deep sleep).
+> Base de travail : branche `Reprise_par_Claude` (= commit `085f169`, deep sleep),
+> poursuivie sur `claude/analyze-existing-code-489616`.
 
 ---
 
@@ -17,9 +18,9 @@ même sans WiFi au mouillage (cible finale : liaison cellulaire LTE-M).
         │  BLE : requête statut 0x13 → trame 104 octets (en plusieurs notifications)
         ▼
 [Passerelle ESP32]  Embedded/esp32_gateway  (cycle → deep sleep 60 s)
-        │  HTTPS POST /report  (en-tête X-API-Key)
+        │  HTTPS POST /report  (en-tête X-API-Key, certificat serveur vérifié)
         ▼
-[Add-on HA "Battery Backend"]  Python, port 8000, SQLite /data/batteries.db
+[Cloudflare] → [Add-on HA "Battery Backend"]  Python, port 8000, SQLite /data/batteries.db
         │  MQTT Discovery (préfixe "homeassistant")
         ▼
 [Broker MQTT HA] ⇄ [Home Assistant : capteurs + switch "décharge"]
@@ -38,21 +39,27 @@ confirmation. Latence = durée du cycle de veille.
 ```
 HA-Batterie-backend-addons/
 ├── repository.yaml                  # déclaration du dépôt d'add-ons HA
-├── Battery Backend/                 # add-on Home Assistant
-│   ├── config.yaml                  # options (api_key), service mqtt:want, port 8000
+├── Battery Backend/                 # add-on Home Assistant (version 1.1.0)
+│   ├── config.yaml                  # options api_key / sensor_expire_after / batteries, watchdog
 │   ├── build.yaml                   # images de base python 3.12 alpine (aarch64, amd64)
-│   ├── Dockerfile / run.sh          # run.sh exporte API_KEY, MQTT_*, DB_PATH via bashio
+│   ├── Dockerfile / run.sh          # run.sh exporte API_KEY, SENSOR_EXPIRE_AFTER, MQTT_*, DB_PATH
 │   ├── requirements.txt             # paho-mqtt==1.6.1
-│   └── main.py                      # HTTP + SQLite + MQTT (~260 lignes)
+│   ├── CHANGELOG.md                 # affiché dans l'interface de l'add-on
+│   ├── main.py                      # HTTP + SQLite + MQTT
+│   └── tests/test_backend.py        # tests unitaires (unittest, sans broker)
 └── Embedded/
     ├── bms_protocol.h               # protocole BMS partagé (passerelle + simulateur)
     ├── esp32_gateway/               # PROJET PLATFORMIO (passerelle)
     │   ├── platformio.ini           # envs : lilygo-debug (défaut), lilygo-release, esp32dev-debug, esp32dev-release
+    │   ├── include/
+    │   │   ├── secrets.example.h    # modèle versionné (WiFi, clé API)
+    │   │   └── secrets.h            # vrais secrets, IGNORÉ par git (à créer)
     │   └── src/
-    │       ├── main.cpp             # cycle complet + deep sleep
-    │       ├── ble_battery.h/.cpp   # dialogue BLE avec le BMS (lecture, commande)
-    │       ├── network.h/.cpp       # internet + HTTP (WiFi ; GSM a venir, meme interface)
-    │       ├── config.h/.cpp        # reglages + secrets/batteries a personnaliser
+    │       ├── main.cpp             # cycle complet, watchdog, deep sleep
+    │       ├── ble_battery.h/.cpp   # dialogue BLE avec le BMS (lecture, commande, validation)
+    │       ├── network.h/.cpp       # internet + HTTPS (WiFi ; GSM à venir, même interface)
+    │       ├── config.h/.cpp        # réglages, URL, batteries
+    │       ├── root_ca.h            # racines TLS acceptées (GTS R1/R4, ISRG X1/X2)
     │       ├── debug.h              # macros DEBUG_* : traces série en mode debug, rien en release
     │       └── types.h              # BatteryConfig, BatteryReading, Cmd
     ├── esp32_battery_simulator/     # sketch Arduino IDE : faux BMS en périphérique BLE
@@ -64,23 +71,32 @@ HA-Batterie-backend-addons/
 ## 3. Composants
 
 ### 3.1 Battery Backend (`Battery Backend/main.py`)
-- Bibliothèque standard uniquement (`http.server.ThreadingHTTPServer`, `sqlite3`,
-  `threading`) + `paho-mqtt` 1.6.1 (API v1 : `mqtt.Client()`, `on_connect(client, userdata, flags, rc)`).
-- `BATTERIES` : dict **codé en dur** `{identifiant: slug}` →
-  `"AA:BB:CC:DD:EE:FF": "battery_1"`, `"11:22:33:44:55:66": "battery_2"`.
-  Un identifiant inconnu reçoit `404 batterie inconnue`.
+- Bibliothèque standard uniquement (`http.server`, `sqlite3`, `secrets`, `threading`)
+  + `paho-mqtt` 1.6.1 (API v1 : `mqtt.Client()`, `on_connect(client, userdata, flags, rc)`).
+- Batteries : option d'add-on `batteries` (liste `id` / `name`) lue dans `/data/options.json`
+  (`OPTIONS_PATH`) → `BATTERIES = {id: name}`. `id` ∈ `[A-Za-z0-9:_-]{1,64}`, `name` ∈
+  `[a-z0-9_]{1,40}` (sert dans les sujets MQTT). Fichier absent ou illisible → défauts
+  `AA:BB:CC:DD:EE:FF → battery_1`, `11:22:33:44:55:66 → battery_2`.
 - SQLite (accès sérialisé par `db_lock`) :
   - `battery_state(mac PK, voltage, current, soc, soh, discharge_off, updated_at)`
   - `pending_commands(mac PK, action)` — une seule commande en attente par batterie (la dernière gagne).
 - Endpoints :
-  - `POST /report` (clé `X-API-Key`) → upsert état, lit + supprime la commande en attente,
-    publie l'état MQTT, répond `{"commands": [...]}`.
-  - `GET /status` → dernier état de chaque batterie (**sans authentification**).
-  - `GET /health` → `{"status": "ok"}`.
-- MQTT Discovery, par batterie `slug` :
+  - `POST /report` (clé `X-API-Key`, comparée en temps constant) → validation stricte
+    (`parse_report` : types, plages 0-70 V / ±1000 A / 0-100 %, booléen), upsert de l'état,
+    lecture + suppression de la commande en attente, publication MQTT, `{"commands": [...]}`.
+    Erreurs : 400 / 401 / 404 (batterie inconnue) / 411 / 413 / 500, toujours en JSON.
+  - `GET /status` (clé `X-API-Key`) → dernier état de chaque batterie.
+  - `GET /health` (public) → `{"status": "ok"}`, utilisé par le watchdog du Supervisor.
+- Serveur : `BackendHTTPServer` (16 connexions max), timeout de socket 15 s, corps ≤ 4 Ko,
+  en-tête `Server: BatteryBackend`, logs échappés (`log()`).
+- MQTT : `connect_async` + reconnexion automatique, callbacks protégés (`@mqtt_callback`),
+  LWT `battery_backend/status` (`online` / `offline`), arrêt propre sur SIGTERM.
+- MQTT Discovery, par batterie `name` :
   - capteurs `voltage` (V), `current` (A), `soc` (%), `soh` (%) — un seul `state_topic`
-    JSON `homeassistant/sensor/<slug>/state`, extraits par `value_template`.
-  - switch `homeassistant/switch/<slug>_discharge/{config,state,set}` ; `ON` = décharge active.
+    JSON `homeassistant/sensor/<name>/state` ; `state_class: measurement`,
+    `expire_after` (option `sensor_expire_after`, 900 s), `availability_topic`.
+  - switch `homeassistant/switch/<name>_discharge/{config,state,set}` ; `ON` = décharge active,
+    seules les valeurs exactes `ON` / `OFF` sont acceptées sur `set`.
 
 ### 3.2 Protocole BMS (`Embedded/bms_protocol.h`)
 - GATT : service `FFE0`, notify `FFE1`, write `FFE2` (UUID 16 bits, repli 128 bits).
@@ -93,14 +109,19 @@ HA-Batterie-backend-addons/
   **pas encore validés sur la vraie batterie** → `DEBUG_DUMP_FRAME = true` dans `config.h` (build debug) pour vérifier.
 
 ### 3.3 Passerelle (`Embedded/esp32_gateway/src/`)
-- Version de cette branche : **WiFi** (`WiFiClientSecure` + `setInsecure()`), pas encore GSM.
-- Cycle : lecture BLE de chaque batterie (`readBattery`) → connexion WiFi → jusqu'à
-  `MAX_ROUNDS = 3` tours "rapport → commande → `applyCommand` (écrit, relit) → rapport de confirmation"
-  → deep sleep `CYCLE_INTERVAL_MS` (60 s). Au réveil, `setup()` repart de zéro.
+- Version de cette branche : **WiFi** (`WiFiClientSecure` + `setCACert(ROOT_CA_BUNDLE)`), pas encore GSM.
+- Cycle : lecture BLE de chaque batterie (`readBattery`) → **si au moins une lecture valide**,
+  connexion WiFi → jusqu'à `MAX_ROUNDS = 3` tours "rapport → commande → `applyCommand`
+  (écrit, relit) → rapport de confirmation" → `networkStop()` → deep sleep `CYCLE_INTERVAL_MS` (60 s).
+- Watchdog : cycle borné à `MAX_CYCLE_DURATION_S` (180 s) ; après un redémarrage anormal
+  (watchdog, panic, brownout), le cycle est sauté et la carte se rendort.
+- Délais : WiFi 15 s, TCP / TLS / réponse HTTP 10 s ; réponse serveur lue seulement si ≤ 512 octets.
 - Réassemblage des notifications : buffer 256 o protégé par `portMUX`, trame complète
   après `FRAME_QUIET_MS` (150 ms) de silence et ≥ 104 octets.
-- Checksum faux → simple avertissement, la lecture est **conservée**.
-- `BATTERIES[]` : `{adresse BLE, type d'adresse, reportId}` ; `reportId` doit être une clé de `BATTERIES` côté add-on.
+- Validation : checksum bloquant (`STRICT_FRAME_CHECKSUM`), valeurs hors bornes rejetées
+  (mêmes bornes que l'add-on).
+- `BATTERIES[]` : `{adresse BLE, type d'adresse, reportId}` ; `reportId` = `id` d'une batterie
+  de l'option `batteries` de l'add-on.
 
 ### 3.4 Simulateur (`Embedded/esp32_battery_simulator`)
 - Second ESP32 en périphérique BLE "LT-SIM01", même GATT, trame découpée en notifications de 20 o.
@@ -111,42 +132,45 @@ HA-Batterie-backend-addons/
 
 ## 4. Choix de conception
 
-1. **Énergie** : l'ESP32 est alimenté par le bord → cycle court puis deep sleep.
+1. **Énergie** : l'ESP32 est alimenté par le bord → cycle court puis deep sleep ; radio réseau
+   allumée seulement s'il y a quelque chose à envoyer.
 2. **Commandes asynchrones** (pull) : pas de connexion entrante vers le bateau.
 3. **Backend sans dépendance compilée** : image Alpine ARM légère.
 4. **Simulateur** pour développer sans toucher à la vraie batterie.
+5. **TLS** : le domaine passe par Cloudflare, qui alterne entre Google Trust Services et
+   Let's Encrypt → les racines des deux sont embarquées (pas d'épinglage d'une seule racine).
+6. **Validation des deux côtés** : la passerelle filtre les trames corrompues, l'add-on ne fait
+   confiance à aucune donnée reçue.
 
 ---
 
 ## 5. Historique à connaître
 
 - `main` contient 3 commits **après** `Reprise_par_Claude` : `d66176d` (durcissement sécurité
-  du backend "par l'IA" : `secrets.compare_digest`, limites de taille, validation des plages,
-  slugs dynamiques), `6fc85ff` (passage passerelle en GSM/TinyGSM, macros `DEBUG_*`),
-  `c5719da` (tmp). Ils ne sont **pas** dans la base actuelle ; à réintégrer de façon sélective si besoin.
-- Un ancien CONTEXT.md (non versionné) annonçait du rate limiting, une clé API sur `/status`,
-  un `batteries_lock` et une reconnexion MQTT : **rien de cela n'existe** dans le code.
+  du backend "par l'IA"), `6fc85ff` (passage passerelle en GSM/TinyGSM, macros `DEBUG_*`),
+  `c5719da` (tmp). Ils ne sont **pas** dans cette branche. Le durcissement du backend et les
+  macros de debug ont été refaits ici ; le GSM reste à reprendre de `6fc85ff`.
+- Un ancien CONTEXT.md (non versionné) annonçait des fonctions qui n'existaient pas ; ce
+  fichier-ci décrit le code réel.
 
 ---
 
-## 6. Problèmes connus (analyse du code, branche Reprise_par_Claude)
+## 6. Problèmes connus
 
-Backend :
-- Clé API comparée par `!=` (pas en temps constant) ; `/status` public.
-- `int(Content-Length)` non protégé, pas de taille max ; pas de validation de plages ;
-  `TypeError` non attrapé (ex. `"voltage_v": null`) → exception dans le handler.
-- `bool(data["discharge_off"])` : la chaîne `"false"` donne `True`.
-- `mqtt_client.connect()` au démarrage sans `try` : broker absent → l'add-on plante.
-- `on_message` : `msg.payload.decode()` sans gestion d'erreur.
-- Capteurs sans `expire_after` / `availability` ni `state_class` → valeurs figées si la passerelle meurt,
-  pas de statistiques long terme ; état capteur non `retain`.
-- Liste `BATTERIES` codée en dur (pas d'option d'add-on).
+Corrigés sur cette branche : clé API en temps constant, `/status` protégé, validation stricte
+des rapports, serveur HTTP durci, reconnexion MQTT, disponibilité / expiration / statistiques
+des entités, batteries configurables, secrets de la passerelle hors du dépôt, HTTPS vérifié,
+réseau à la demande, délais bornés, watchdog, trames BLE validées.
 
-Passerelle :
-- Le WiFi est connecté dans `setup()` même si aucune batterie n'est lisible.
-- `WiFiClientSecure.setInsecure()` : pas de vérification du certificat.
-- Secrets (`WIFI_*`, `API_KEY`) dans le code source → à sortir dans un fichier non versionné.
-- Checksum invalide toléré.
+Restants :
+- Une commande livrée dans une réponse HTTP perdue (coupure réseau) est perdue : l'utilisateur
+  doit rebasculer le switch (l'état réel remonte au rapport suivant).
+- Pas de limitation des essais de clé API par IP : derrière Cloudflare, l'IP vue est celle du
+  proxy (un blocage par IP bloquerait aussi la passerelle). La clé doit donc être longue.
+- BLE sans appairage (limite du BMS) : un appareil à portée peut imiter la batterie.
+- La clé API d'exemple doit être remplacée (l'add-on l'annonce au démarrage).
+- Changer le `name` d'une batterie crée de nouvelles entités HA (anciennes à supprimer à la main).
+- `test_http_report_mock.ino` utilise encore `setInsecure()` (sketch de test seulement).
 
 Sécurité dépôt :
 - Le commit `6fc85ff` (sur `main`) contient un vrai mot de passe WiFi de box dans
@@ -157,9 +181,8 @@ Sécurité dépôt :
 ## 7. Feuille de route envisagée
 
 1. Migration embarqué vers PlatformIO — **passerelle faite** (simulateur et mock encore en .ino).
-2. Sortir les secrets de la passerelle (`include/secrets.h` ignoré par git + exemple versionné).
-3. Repasser la passerelle en LTE-M (LILYGO T-SIM7080G-S3, TinyGSM) en reprenant `6fc85ff`,
-   en n'allumant le modem que si une batterie a été lue.
-4. Durcir le backend (reprendre le meilleur de `d66176d`, + reconnexion MQTT, `expire_after`, `state_class`).
-5. Valider les offsets BMS sur la vraie batterie.
-6. Plus tard : position GNSS, mesures PMU AXP2101 (solaire, batterie de secours).
+2. Repasser la passerelle en LTE-M (LILYGO T-SIM7080G-S3, TinyGSM) en reprenant `6fc85ff`,
+   derrière l'interface `network.h` (`networkStop()` = extinction du modem). Attention : le
+   TLS sera alors fait par le modem, la vérification du certificat est à refaire de ce côté.
+3. Valider les offsets BMS sur la vraie batterie.
+4. Plus tard : position GNSS, mesures PMU AXP2101 (solaire, batterie de secours).
