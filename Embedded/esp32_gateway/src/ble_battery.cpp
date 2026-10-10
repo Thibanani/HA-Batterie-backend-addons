@@ -77,19 +77,28 @@ bool parseStatus(const uint8_t* d, size_t len, BatteryReading &r) {
     DEBUG_PRINTF("[BLE] Marqueur inattendu 0x%02X (attendu 0x%02X)\n", d[BMS_OFF_MARKER], BMS_MARKER_STATUS);
     return false;
   }
-#ifdef DEBUG_ENABLE
-  // Diagnostic seulement : la lecture est conservee meme si le checksum est faux.
   if (bmsChecksum(d, len - 1) != d[len - 1]) {
+    if (STRICT_FRAME_CHECKSUM) {
+      DEBUG_PRINTLN("[BLE] Checksum de trame invalide : lecture rejetee.");
+      return false;
+    }
     DEBUG_PRINTLN("[BLE] Attention : checksum de trame invalide (lecture conservee).");
   }
-#endif
 
   r.voltage_v    = bmsReadLE(d, BMS_OFF_VOLTAGE_MV, 4) / 1000.0f;
   r.current_a    = (int32_t)bmsReadLE(d, BMS_OFF_CURRENT_MA, 4) / 1000.0f;
   r.soc          = (uint16_t)bmsReadLE(d, BMS_OFF_SOC, 2);
   r.soh          = (uint16_t)bmsReadLE(d, BMS_OFF_SOH, 2);
   r.dischargeOff = (bmsReadLE(d, BMS_OFF_STATE, 4) & BMS_STATE_DISCHARGE_OFF) != 0;
-  r.valid        = true;
+
+  // Valeurs physiquement impossibles : trame corrompue ou offsets faux. Inutile
+  // d'allumer le reseau pour les envoyer, l'add-on les refuserait (memes bornes).
+  if (r.voltage_v > MAX_VOLTAGE_V || fabsf(r.current_a) > MAX_CURRENT_A || r.soc > 100 || r.soh > 100) {
+    DEBUG_PRINTF("[BLE] Valeurs incoherentes (%.2f V, %.2f A, SOC %u, SOH %u) : lecture rejetee.\n",
+                  r.voltage_v, r.current_a, r.soc, r.soh);
+    return false;
+  }
+  r.valid = true;
 
   DEBUG_PRINTF("[BLE] Statut : %.2f V, %.2f A, SOC %u %%, SOH %u %%, decharge %s\n",
                 r.voltage_v, r.current_a, r.soc, r.soh, r.dischargeOff ? "COUPEE" : "active");

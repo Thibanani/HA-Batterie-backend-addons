@@ -27,5 +27,10 @@ static const uint32_t FRAME_QUIET_MS         = 150;    // silence apres le derni
 static const uint32_t AFTER_COMMAND_DELAY_MS = 800;    // pause entre l'ecriture d'une commande et la relecture
 static const int      MAX_ROUNDS             = 3;      // rapports successifs par cycle (rapport + confirmations)
 static const size_t   MAX_RESPONSE_SIZE      = 512;    // taille maximale lue dans une reponse du serveur
+// Trame au checksum faux : rejetee. Passer a false (avec DEBUG_DUMP_FRAME) seulement
+// pour diagnostiquer une batterie dont le checksum ne suivrait pas bms_protocol.h.
+static const bool     STRICT_FRAME_CHECKSUM  = true;
+static const float    MAX_VOLTAGE_V          = 70.0f;   // bornes de validite d'une lecture,
+static const float    MAX_CURRENT_A          = 1000.0f; // identiques a celles de l'add-on
 static const bool     DEBUG_DUMP_FRAME       = false;  // true : affiche chaque trame recue en hexadecimal (build debug seulement)
                                                         // (utile pour valider les offsets sur la vraie batterie)
