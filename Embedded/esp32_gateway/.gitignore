@@ -1,2 +1,5 @@
 .pio/
 .vscode/
+
+# Secrets locaux (copie remplie de include/secrets.example.h)
+include/secrets.h

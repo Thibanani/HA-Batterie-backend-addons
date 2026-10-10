@@ -6,7 +6,7 @@
 #include "types.h"
 
 // ---------------- A personnaliser (definis dans config.cpp) ----------------
-extern const char* WIFI_SSID;
+extern const char* WIFI_SSID;          // secrets : include/secrets.h
 extern const char* WIFI_PASSWORD;
 extern const char* SERVER_URL;
 extern const char* API_KEY;            // identique a l'option "api_key" de l'add-on
