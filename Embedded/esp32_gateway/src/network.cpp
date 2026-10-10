@@ -9,6 +9,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "network.h"
+#include "debug.h"
 #include "config.h"
 
 bool networkIsConnected() {
@@ -17,18 +18,18 @@ bool networkIsConnected() {
 
 bool networkConnect() {
   if (networkIsConnected()) return true;
-  Serial.printf("Connexion WiFi a %s...\n", WIFI_SSID);
+  DEBUG_PRINTF("Connexion WiFi a %s...\n", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   uint32_t start = millis();
   while (!networkIsConnected() && millis() - start < 20000) {
     delay(500);
-    Serial.print(".");
+    DEBUG_PRINT(".");
   }
   if (networkIsConnected()) {
-    Serial.println("\nWiFi connecte, IP: " + WiFi.localIP().toString());
+    DEBUG_PRINTLN("\nWiFi connecte, IP: " + WiFi.localIP().toString());
     return true;
   }
-  Serial.println("\nEchec de connexion WiFi.");
+  DEBUG_PRINTLN("\nEchec de connexion WiFi.");
   return false;
 }
 
@@ -36,7 +37,7 @@ bool networkConnect() {
 Cmd parseCommand(const String &body) {
   StaticJsonDocument<256> doc;
   if (deserializeJson(doc, body)) {
-    Serial.println("[HTTP] Reponse illisible.");
+    DEBUG_PRINTLN("[HTTP] Reponse illisible.");
     return Cmd::None;
   }
   Cmd result = Cmd::None;
@@ -48,7 +49,7 @@ Cmd parseCommand(const String &body) {
     } else if (strcmp(action, "discharge_on") == 0) {
       result = Cmd::DischargeOn;
     } else {
-      Serial.printf("[HTTP] Commande inconnue ignoree : %s\n", action);
+      DEBUG_PRINTF("[HTTP] Commande inconnue ignoree : %s\n", action);
     }
   }
   return result;
@@ -59,7 +60,7 @@ Cmd parseCommand(const String &body) {
 bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut) {
   cmdOut = Cmd::None;
   if (!networkIsConnected()) {
-    Serial.println("[HTTP] Pas de reseau : rapport ignore.");
+    DEBUG_PRINTLN("[HTTP] Pas de reseau : rapport ignore.");
     return false;
   }
 
@@ -81,23 +82,25 @@ bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut) 
 
   String payload;
   serializeJson(doc, payload);
-  Serial.println("[HTTP] POST " + payload);
+  DEBUG_PRINTLN("[HTTP] POST " + payload);
 
   int code = http.POST(payload);
-  Serial.printf("[HTTP] Reponse : %d\n", code);
+  DEBUG_PRINTF("[HTTP] Reponse : %d\n", code);
   if (code != 200) {
+#ifdef DEBUG_ENABLE
     if (code <= 0) {
       char errBuf[128];
       client.lastError(errBuf, sizeof(errBuf));
-      Serial.printf("[HTTP] Detail : %s\n", errBuf);
+      DEBUG_PRINTF("[HTTP] Detail : %s\n", errBuf);
     }
+#endif
     http.end();
     return false;
   }
 
   String body = http.getString();
   http.end();
-  Serial.println("[HTTP] " + body);
+  DEBUG_PRINTLN("[HTTP] " + body);
   cmdOut = parseCommand(body);
   return true;
 }

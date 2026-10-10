@@ -5,6 +5,7 @@
 #include <NimBLEDevice.h>
 #include "bms_protocol.h"   // Embedded/bms_protocol.h (voir build_flags dans platformio.ini)
 #include "ble_battery.h"
+#include "debug.h"
 #include "config.h"
 
 struct BleSession {
@@ -54,29 +55,34 @@ size_t rxCopy(uint8_t* dest, size_t destSize) {
   return n;
 }
 
-void dumpHex(const uint8_t* d, size_t len) {
-  Serial.printf("[BLE] Trame recue (%u octets) :", (unsigned)len);
+#ifdef DEBUG_ENABLE
+static void dumpHex(const uint8_t* d, size_t len) {
+  DEBUG_PRINTF("[BLE] Trame recue (%u octets) :", (unsigned)len);
   for (size_t i = 0; i < len; i++) {
-    if (i % 16 == 0) Serial.print("\n  ");
-    Serial.printf("%02X ", d[i]);
+    if (i % 16 == 0) DEBUG_PRINT("\n  ");
+    DEBUG_PRINTF("%02X ", d[i]);
   }
-  Serial.println();
+  DEBUG_PRINTLN();
 }
+#endif
 
 // ---------------- Decodage de la trame de statut ----------------
 bool parseStatus(const uint8_t* d, size_t len, BatteryReading &r) {
   r.valid = false;
   if (len < BMS_STATUS_LEN) {
-    Serial.printf("[BLE] Trame trop courte : %u octets (attendu >= %u)\n", (unsigned)len, (unsigned)BMS_STATUS_LEN);
+    DEBUG_PRINTF("[BLE] Trame trop courte : %u octets (attendu >= %u)\n", (unsigned)len, (unsigned)BMS_STATUS_LEN);
     return false;
   }
   if (d[BMS_OFF_MARKER] != BMS_MARKER_STATUS) {
-    Serial.printf("[BLE] Marqueur inattendu 0x%02X (attendu 0x%02X)\n", d[BMS_OFF_MARKER], BMS_MARKER_STATUS);
+    DEBUG_PRINTF("[BLE] Marqueur inattendu 0x%02X (attendu 0x%02X)\n", d[BMS_OFF_MARKER], BMS_MARKER_STATUS);
     return false;
   }
+#ifdef DEBUG_ENABLE
+  // Diagnostic seulement : la lecture est conservee meme si le checksum est faux.
   if (bmsChecksum(d, len - 1) != d[len - 1]) {
-    Serial.println("[BLE] Attention : checksum de trame invalide (lecture conservee).");
+    DEBUG_PRINTLN("[BLE] Attention : checksum de trame invalide (lecture conservee).");
   }
+#endif
 
   r.voltage_v    = bmsReadLE(d, BMS_OFF_VOLTAGE_MV, 4) / 1000.0f;
   r.current_a    = (int32_t)bmsReadLE(d, BMS_OFF_CURRENT_MA, 4) / 1000.0f;
@@ -85,7 +91,7 @@ bool parseStatus(const uint8_t* d, size_t len, BatteryReading &r) {
   r.dischargeOff = (bmsReadLE(d, BMS_OFF_STATE, 4) & BMS_STATE_DISCHARGE_OFF) != 0;
   r.valid        = true;
 
-  Serial.printf("[BLE] Statut : %.2f V, %.2f A, SOC %u %%, SOH %u %%, decharge %s\n",
+  DEBUG_PRINTF("[BLE] Statut : %.2f V, %.2f A, SOC %u %%, SOH %u %%, decharge %s\n",
                 r.voltage_v, r.current_a, r.soc, r.soh, r.dischargeOff ? "COUPEE" : "active");
   return true;
 }
@@ -120,7 +126,7 @@ bool bleOpen(const BatteryConfig &cfg, BleSession &s) {
   for (int attempt = 1; attempt <= BLE_CONNECT_ATTEMPTS; attempt++) {
     NimBLEClient* c = NimBLEDevice::createClient();
     c->setConnectTimeout(BLE_CONNECT_TIMEOUT_MS);
-    Serial.printf("[BLE] Connexion a %s (essai %d/%d)...\n", cfg.bleAddress, attempt, BLE_CONNECT_ATTEMPTS);
+    DEBUG_PRINTF("[BLE] Connexion a %s (essai %d/%d)...\n", cfg.bleAddress, attempt, BLE_CONNECT_ATTEMPTS);
     if (c->connect(NimBLEAddress(cfg.bleAddress, cfg.bleAddrType))) {
       s.client = c;
       break;
@@ -129,30 +135,30 @@ bool bleOpen(const BatteryConfig &cfg, BleSession &s) {
     delay(1000);
   }
   if (!s.client) {
-    Serial.println("[BLE] Echec de connexion.");
+    DEBUG_PRINTLN("[BLE] Echec de connexion.");
     return false;
   }
 
   NimBLERemoteService* svc = findService(s.client);
   if (!svc) {
-    Serial.println("[BLE] Service 0xFFE0 introuvable sur ce device.");
+    DEBUG_PRINTLN("[BLE] Service 0xFFE0 introuvable sur ce device.");
     bleClose(s);
     return false;
   }
   NimBLERemoteCharacteristic* notifyChr = findChar(svc, BMS_NOTIFY_UUID16, BMS_NOTIFY_UUID128);
   s.writeChr = findChar(svc, BMS_WRITE_UUID16, BMS_WRITE_UUID128);
   if (!notifyChr || !s.writeChr) {
-    Serial.println("[BLE] Caracteristique FFE1 ou FFE2 introuvable (verifie avec nRF Connect).");
+    DEBUG_PRINTLN("[BLE] Caracteristique FFE1 ou FFE2 introuvable (verifie avec nRF Connect).");
     bleClose(s);
     return false;
   }
   if (!notifyChr->canNotify() || !notifyChr->subscribe(true, onNotify)) {
-    Serial.println("[BLE] Impossible de s'abonner aux notifications de FFE1.");
+    DEBUG_PRINTLN("[BLE] Impossible de s'abonner aux notifications de FFE1.");
     bleClose(s);
     return false;
   }
 
-  Serial.printf("[BLE] Connecte (MTU %u).\n", (unsigned)s.client->getMTU());
+  DEBUG_PRINTF("[BLE] Connecte (MTU %u).\n", (unsigned)s.client->getMTU());
   return true;
 }
 
@@ -164,7 +170,7 @@ bool bleWrite(BleSession &s, const uint8_t* cmd) {
 bool bleQueryStatus(BleSession &s, BatteryReading &out) {
   rxReset();
   if (!bleWrite(s, BMS_CMD_STATUS)) {
-    Serial.println("[BLE] Ecriture de la requete de statut impossible.");
+    DEBUG_PRINTLN("[BLE] Ecriture de la requete de statut impossible.");
     return false;
   }
 
@@ -179,7 +185,9 @@ bool bleQueryStatus(BleSession &s, BatteryReading &out) {
 
   uint8_t frame[RX_BUF_SIZE];
   size_t len = rxCopy(frame, sizeof(frame));
+#ifdef DEBUG_ENABLE
   if (DEBUG_DUMP_FRAME) dumpHex(frame, len);
+#endif
   return parseStatus(frame, len, out);
 }
 
@@ -202,19 +210,17 @@ BatteryReading applyCommand(const BatteryConfig &cfg, Cmd cmd) {
   if (!bleOpen(cfg, s)) return r;
 
   bool wantOff = (cmd == Cmd::DischargeOff);
-  Serial.printf("[BLE] Envoi de la commande : %s\n", wantOff ? "COUPURE de la decharge" : "RETABLISSEMENT de la decharge");
+  DEBUG_PRINTF("[BLE] Envoi de la commande : %s\n", wantOff ? "COUPURE de la decharge" : "RETABLISSEMENT de la decharge");
 
   if (bleWrite(s, wantOff ? BMS_CMD_DISCHARGE_OFF : BMS_CMD_DISCHARGE_ON)) {
     delay(AFTER_COMMAND_DELAY_MS);
     if (bleQueryStatus(s, r)) {
-      if (r.dischargeOff == wantOff) {
-        Serial.println("[BLE] Commande confirmee par la batterie.");
-      } else {
-        Serial.println("[BLE] ATTENTION : l'etat lu ne correspond pas a la commande envoyee.");
-      }
+      DEBUG_PRINTLN(r.dischargeOff == wantOff
+                      ? "[BLE] Commande confirmee par la batterie."
+                      : "[BLE] ATTENTION : l'etat lu ne correspond pas a la commande envoyee.");
     }
   } else {
-    Serial.println("[BLE] Echec d'ecriture de la commande.");
+    DEBUG_PRINTLN("[BLE] Echec d'ecriture de la commande.");
   }
   bleClose(s);
   return r;

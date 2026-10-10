@@ -22,5 +22,5 @@ static const uint32_t STATUS_TIMEOUT_MS      = 4000;   // attente maximale de la
 static const uint32_t FRAME_QUIET_MS         = 150;    // silence apres le dernier morceau = trame complete
 static const uint32_t AFTER_COMMAND_DELAY_MS = 800;    // pause entre l'ecriture d'une commande et la relecture
 static const int      MAX_ROUNDS             = 3;      // rapports successifs par cycle (rapport + confirmations)
-static const bool     DEBUG_DUMP_FRAME       = false;  // true : affiche chaque trame recue en hexadecimal
+static const bool     DEBUG_DUMP_FRAME       = false;  // true : affiche chaque trame recue en hexadecimal (build debug seulement)
                                                         // (utile pour valider les offsets sur la vraie batterie)

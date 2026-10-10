@@ -25,11 +25,14 @@ Toute modification livrée de l'add-on doit incrémenter `version` dans `Battery
 
 ### Passerelle — PlatformIO (`Embedded/esp32_gateway/`)
 PlatformIO CLI : `~/.platformio/penv/Scripts/pio.exe` (pas dans le PATH).
+Chaque carte existe en deux modes : **debug** (traces série actives) et **release**
+(aucune trace, pour l'installation sur le bateau). Environnements : `lilygo-debug` (défaut),
+`lilygo-release`, `esp32dev-debug`, `esp32dev-release`.
 ```bash
 cd Embedded/esp32_gateway
-pio run                                  # env par défaut : lilygo-t-sim7080g-s3
-pio run -e esp32dev                      # ESP32 classique
-pio run -t upload && pio device monitor
+pio run                                  # env par défaut : lilygo-debug
+pio run -e lilygo-release                # firmware sans traces série
+pio run -e lilygo-debug -t upload && pio device monitor
 ```
 ⚠️ **Limite Windows 260 caractères** : depuis un worktree (`.claude/worktrees/...`) les chemins
 de `.pio/libdeps/.../NimBLE-Arduino/...` sont trop longs et la compilation échoue avec des
@@ -42,7 +45,11 @@ Encore des sketches Arduino IDE (`.ino`) ; ils incluent `"../bms_protocol.h"`.
 ## Règles
 
 ### C++ / ESP32
-- Chaînes envoyées sur `Serial` en ASCII sans accents (moniteur série).
+- **Traces série : jamais `Serial.*` directement** dans la passerelle, mais les macros `DEBUG_PRINT`,
+  `DEBUG_PRINTLN`, `DEBUG_PRINTF`, `DEBUG_FLUSH`, `DEBUG_BEGIN` de `src/debug.h`. Elles sont actives
+  seulement avec `-DDEBUG_ENABLE` (envs `*-debug`) ; en release, leurs arguments ne sont pas évalués.
+  Le code qui ne sert qu'au debug (ex. `dumpHex`) se met entre `#ifdef DEBUG_ENABLE`.
+- Chaînes de trace en ASCII sans accents (moniteur série).
 - Éviter l'allocation dynamique dans les chemins chauds ; buffers fixes, `StaticJsonDocument<256>`.
 - **NimBLE-Arduino 2.x** obligatoire (API différente de 1.4 : `subscribe()`, callbacks avec `NimBLEConnInfo&`…).
 - **ArduinoJson 6.x** (le code utilise `StaticJsonDocument`, déprécié en v7).

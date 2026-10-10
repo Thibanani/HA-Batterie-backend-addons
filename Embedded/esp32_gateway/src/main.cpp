@@ -13,15 +13,21 @@
  * Organisation du code (src/) :
  *   config.h/.cpp       reglages, reseau, serveur, liste des batteries (A PERSONNALISER)
  *   types.h             structures communes
+ *   debug.h             macros de traces serie (mode debug / release)
  *   ble_battery.h/.cpp  dialogue Bluetooth avec le BMS
  *   network.h/.cpp      connexion internet (WiFi, GSM plus tard) et HTTP
  *   main.cpp            cycle complet et mise en veille
+ *
+ * Modes de compilation (voir platformio.ini) :
+ *   *-debug    traces serie actives
+ *   *-release  aucune trace serie
  *
  * Dependances (declarees dans platformio.ini) : NimBLE-Arduino 2.x, ArduinoJson 6.x.
  */
 
 #include <Arduino.h>
 #include "ble_battery.h"
+#include "debug.h"
 #include "network.h"
 #include "config.h"
 
@@ -72,20 +78,19 @@ void runCycle() {
 #define uS_TO_mS_FACTOR 1000ULL
 
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
-  Serial.println();
-  Serial.println("=== Passerelle ESP32 <-> batterie BLE <-> serveur ===");
+  DEBUG_BEGIN(115200);
+  DEBUG_PRINTLN();
+  DEBUG_PRINTLN("=== Passerelle ESP32 <-> batterie BLE <-> serveur ===");
 
   networkConnect();
   bleInit();
 }
 
 void loop() {
-  Serial.println("\n--- Nouveau cycle ---");
+  DEBUG_PRINTLN("\n--- Nouveau cycle ---");
   runCycle();
-  Serial.printf("Prochain cycle dans %u s\n", (unsigned)(CYCLE_INTERVAL_MS / 1000));
-  Serial.flush();
+  DEBUG_PRINTF("Prochain cycle dans %u s\n", (unsigned)(CYCLE_INTERVAL_MS / 1000));
+  DEBUG_FLUSH();
   esp_sleep_enable_timer_wakeup(CYCLE_INTERVAL_MS * uS_TO_mS_FACTOR);
   esp_deep_sleep_start();
 }

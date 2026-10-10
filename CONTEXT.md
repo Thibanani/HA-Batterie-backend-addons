@@ -47,12 +47,13 @@ HA-Batterie-backend-addons/
 └── Embedded/
     ├── bms_protocol.h               # protocole BMS partagé (passerelle + simulateur)
     ├── esp32_gateway/               # PROJET PLATFORMIO (passerelle)
-    │   ├── platformio.ini           # envs : lilygo-t-sim7080g-s3 (défaut), esp32dev
+    │   ├── platformio.ini           # envs : lilygo-debug (défaut), lilygo-release, esp32dev-debug, esp32dev-release
     │   └── src/
     │       ├── main.cpp             # cycle complet + deep sleep
     │       ├── ble_battery.h/.cpp   # dialogue BLE avec le BMS (lecture, commande)
     │       ├── network.h/.cpp       # internet + HTTP (WiFi ; GSM a venir, meme interface)
     │       ├── config.h/.cpp        # reglages + secrets/batteries a personnaliser
+    │       ├── debug.h              # macros DEBUG_* : traces série en mode debug, rien en release
     │       └── types.h              # BatteryConfig, BatteryReading, Cmd
     ├── esp32_battery_simulator/     # sketch Arduino IDE : faux BMS en périphérique BLE
     └── test_http_report_mock/       # sketch Arduino IDE : POST /report en WiFi, sans BLE
@@ -89,7 +90,7 @@ HA-Batterie-backend-addons/
   cellules u16 @16.., courant mA i32 @48 (négatif = décharge), état u32 @68
   (bit `0x80` = décharge coupée), SOC u16 @90, SOH u16 @92, checksum = somme & 0xFF (dernier octet).
 - ⚠️ Offsets issus de projets open source (litime-ble-hacs, pq_bms_bluetooth),
-  **pas encore validés sur la vraie batterie** → `DEBUG_DUMP_FRAME = true` dans la passerelle pour vérifier.
+  **pas encore validés sur la vraie batterie** → `DEBUG_DUMP_FRAME = true` dans `config.h` (build debug) pour vérifier.
 
 ### 3.3 Passerelle (`Embedded/esp32_gateway/src/`)
 - Version de cette branche : **WiFi** (`WiFiClientSecure` + `setInsecure()`), pas encore GSM.
