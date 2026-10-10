@@ -6,12 +6,16 @@ Tests du backend (bibliotheque standard + paho-mqtt) :
 MQTT est remplace par un faux client : aucun broker n'est necessaire.
 """
 
+import contextlib
 import http.client
+import io
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -56,7 +60,7 @@ class BackendTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         main.init_db()
-        cls.server = main.ThreadingHTTPServer(("127.0.0.1", 0), main.Handler)
+        cls.server = main.make_server("127.0.0.1", 0)
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -197,6 +201,61 @@ class ReportValidationTests(BackendTestCase):
     def test_oversized_body_is_rejected(self):
         report = valid_report(padding="x" * (main.MAX_BODY_SIZE + 1))
         self.assertRejected(report, status=413)
+
+
+class HttpHardeningTests(BackendTestCase):
+    def test_security_headers_and_no_python_version(self):
+        _, _, resp = self.request("GET", "/health")
+        self.assertEqual(resp.getheader("Server"), "BatteryBackend")
+        self.assertEqual(resp.getheader("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(resp.getheader("Cache-Control"), "no-store")
+
+    def test_errors_are_json(self):
+        status, payload, _ = self.request("GET", "/inexistant")
+        self.assertEqual((status, payload), (404, {"error": "not found"}))
+
+    def test_log_escapes_control_characters(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main.log("ligne\nFAUSSE LIGNE\x1b[31m")
+        self.assertEqual(out.getvalue(), "ligne\\x0aFAUSSE LIGNE\\x1b[31m\n")
+
+
+class SlowClientTests(unittest.TestCase):
+    """Serveur dedie avec un timeout court et une seule connexion a la fois."""
+
+    def setUp(self):
+        class FastTimeoutHandler(main.Handler):
+            timeout = 0.5
+
+        self.server = main.BackendHTTPServer(("127.0.0.1", 0), FastTimeoutHandler, max_connections=1)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def open_idle_connection(self):
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        sock.sendall(b"POST /report HTTP/1.1\r\n")  # requete jamais terminee
+        return sock
+
+    def test_slow_client_is_disconnected(self):
+        with contextlib.redirect_stdout(io.StringIO()), self.open_idle_connection() as sock:
+            start = time.monotonic()
+            self.assertEqual(sock.recv(1024), b"")
+            self.assertLess(time.monotonic() - start, 3)
+
+    def test_connections_beyond_limit_are_refused(self):
+        with contextlib.redirect_stdout(io.StringIO()) as out, self.open_idle_connection():
+            time.sleep(0.2)  # laisse le serveur accepter la premiere connexion
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            with self.assertRaises((http.client.RemoteDisconnected, ConnectionError)):
+                conn.request("GET", "/health")
+                conn.getresponse()
+            conn.close()
+        self.assertIn("Trop de connexions simultanees", out.getvalue())
 
 
 class PendingCommandTests(BackendTestCase):

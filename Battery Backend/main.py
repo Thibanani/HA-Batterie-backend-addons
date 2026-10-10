@@ -38,6 +38,9 @@ DEFAULT_API_KEYS = {"change-moi", "change-moi-en-vrai-secret", "TON_API_KEY"}
 MIN_API_KEY_LENGTH = 16
 
 MAX_BODY_SIZE = 4096  # octets ; un rapport de l'ESP32 en fait ~150
+HTTP_PORT = 8000
+SOCKET_TIMEOUT_S = 15      # coupe les clients trop lents (attaque "slowloris")
+MAX_CONNECTIONS = 16       # connexions traitees en parallele, au-dela : refusees
 BATTERY_ID_RE = re.compile(r"[A-Za-z0-9:_-]{1,64}")
 
 # Bornes physiques acceptees (batteries LiFePO4 de 12 a 48 V).
@@ -55,6 +58,13 @@ BATTERIES = {
 }
 
 db_lock = threading.Lock()
+
+# Caracteres de controle echappes dans les logs (anti injection de fausses lignes).
+_LOG_ESCAPES = {c: f"\\x{c:02x}" for c in [*range(32), 127]}
+
+
+def log(message: str):
+    print(message.translate(_LOG_ESCAPES), flush=True)
 
 
 @contextmanager
@@ -133,7 +143,7 @@ def publish_discovery(client, slug: str):
 
 
 def on_connect(client, userdata, flags, rc):
-    print(f"MQTT connecte (code {rc})", flush=True)
+    log(f"MQTT connecte (code {rc})")
     for mac, slug in BATTERIES.items():
         publish_discovery(client, slug)
         client.subscribe(f"{DISCOVERY_PREFIX}/switch/{slug}_discharge/set")
@@ -152,7 +162,7 @@ def on_message(client, userdata, msg):
             "ON CONFLICT(mac) DO UPDATE SET action=excluded.action",
             (mac, action),
         )
-    print(f"Commande en attente pour {mac} : {action}", flush=True)
+    log(f"Commande en attente pour {mac} : {action}")
 
 
 def get_all_status():
@@ -230,11 +240,19 @@ class HttpError(Exception):
 
 
 class Handler(BaseHTTPRequestHandler):
+    server_version = "BatteryBackend"   # ne divulgue pas la version de Python
+    timeout = SOCKET_TIMEOUT_S
+
+    def version_string(self):
+        return self.server_version
+
     def _send_json(self, status: int, payload: dict):
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
@@ -243,13 +261,16 @@ class Handler(BaseHTTPRequestHandler):
             handler()
         except HttpError as e:
             self._send_json(e.status, {"error": e.message})
+        except (TimeoutError, ConnectionError):
+            log(f"{self.client_address[0]} : connexion trop lente ou interrompue")
+            self.close_connection = True
         except Exception:
             traceback.print_exc()
             self._send_json(500, {"error": "erreur interne"})
 
     def _require_api_key(self):
         if not api_key_valid(self.headers.get("X-API-Key")):
-            print(f"Cle API invalide depuis {self.client_address[0]}", flush=True)
+            log(f"Cle API invalide depuis {self.client_address[0]}")
             raise HttpError(401, "cle API invalide")
 
     def _read_json_body(self):
@@ -299,7 +320,7 @@ class Handler(BaseHTTPRequestHandler):
 
         mac = report["mac"]
         if mac not in BATTERIES:
-            print(f"Rapport refuse : batterie inconnue {mac}", flush=True)
+            log(f"Rapport refuse : batterie inconnue {mac}")
             raise HttpError(404, "batterie inconnue")
 
         slug = BATTERIES[mac]
@@ -337,19 +358,49 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(200, {"commands": [pending] if pending else []})
 
     def log_message(self, fmt, *args):
-        print(f"{self.address_string()} - {fmt % args}", flush=True)
+        log(f"{self.address_string()} - {fmt % args}")
+
+
+class BackendHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer qui borne le nombre de connexions traitees en parallele."""
+
+    request_queue_size = MAX_CONNECTIONS
+
+    def __init__(self, server_address, handler_class, max_connections=MAX_CONNECTIONS):
+        super().__init__(server_address, handler_class)
+        self._slots = threading.BoundedSemaphore(max_connections)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            log(f"Trop de connexions simultanees : {client_address[0]} refuse")
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
+def make_server(host="0.0.0.0", port=HTTP_PORT, **kwargs):
+    return BackendHTTPServer((host, port), Handler, **kwargs)
 
 
 def check_api_key():
     if not API_KEY:
-        print("ERREUR : l'option api_key est vide, tous les rapports seront refuses.", flush=True)
+        log("ERREUR : l'option api_key est vide, tous les rapports seront refuses.")
     elif API_KEY in DEFAULT_API_KEYS or len(API_KEY) < MIN_API_KEY_LENGTH:
-        print(
+        log(
             "ATTENTION : la cle API est une valeur d'exemple ou fait moins de "
             f"{MIN_API_KEY_LENGTH} caracteres. Remplace-la par une valeur longue et "
             "aleatoire (ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\") "
-            "dans l'add-on ET dans la passerelle.",
-            flush=True,
+            "dans l'add-on ET dans la passerelle."
         )
 
 
@@ -369,8 +420,8 @@ def main():
     mqtt_client.loop_start()
 
     # Demarrage du serveur http
-    server = ThreadingHTTPServer(("0.0.0.0", 8000), Handler)
-    print("Serveur demarre sur le port 8000", flush=True)
+    server = make_server()
+    log(f"Serveur demarre sur le port {HTTP_PORT}")
     server.serve_forever()
 
 
