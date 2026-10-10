@@ -6,7 +6,7 @@ ecrire), et renvoie la commande en attente (coupure / retablissement
 de la decharge) a appliquer au prochain reveil de l'ESP32.
 
 Ecrit uniquement avec la bibliotheque standard (http.server, sqlite3,
-json) + paho-mqtt, pour rester leger et eviter toute dependance a
+json, secrets) + paho-mqtt, pour rester leger et eviter toute dependance a
 compiler sur l'image Alpine/ARM de l'add-on.
 
 Variables d'environnement (injectees par run.sh via bashio) :
@@ -15,8 +15,11 @@ Variables d'environnement (injectees par run.sh via bashio) :
 
 import json
 import os
+import re
+import secrets
 import sqlite3
 import threading
+import traceback
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -29,6 +32,21 @@ MQTT_USERNAME = os.environ.get("MQTT_USERNAME") or None
 MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
 DB_PATH = os.environ.get("DB_PATH", "/data/batteries.db")
 DISCOVERY_PREFIX = "homeassistant"
+
+# Cles livrees en exemple (add-on, sketches) : a ne jamais garder en service.
+DEFAULT_API_KEYS = {"change-moi", "change-moi-en-vrai-secret", "TON_API_KEY"}
+MIN_API_KEY_LENGTH = 16
+
+MAX_BODY_SIZE = 4096  # octets ; un rapport de l'ESP32 en fait ~150
+BATTERY_ID_RE = re.compile(r"[A-Za-z0-9:_-]{1,64}")
+
+# Bornes physiques acceptees (batteries LiFePO4 de 12 a 48 V).
+LIMITS = {
+    "voltage_v": (0.0, 70.0),
+    "current_a": (-1000.0, 1000.0),
+    "soc_pct": (0, 100),
+    "soh_pct": (0, 100),
+}
 
 # Adapte les adresses MAC et les noms a tes deux batteries reelles.
 BATTERIES = {
@@ -159,7 +177,58 @@ def get_all_status():
     return result
 
 
+# ---------------- Securite : cle API et validation des rapports ----------------
+def api_key_valid(given) -> bool:
+    """Compare la cle recue a API_KEY en temps constant (anti timing-attack)."""
+    if not API_KEY or given is None:
+        return False
+    return secrets.compare_digest(given.encode("utf-8"), API_KEY.encode("utf-8"))
+
+
+class InvalidReport(ValueError):
+    pass
+
+
+def _number(data: dict, key: str, integer: bool = False):
+    value = data.get(key)
+    allowed = int if integer else (int, float)
+    # bool est un int en Python : on le refuse explicitement.
+    if isinstance(value, bool) or not isinstance(value, allowed):
+        raise InvalidReport(f"{key} manquant ou de type invalide")
+    low, high = LIMITS[key]
+    if not (low <= value <= high):  # rejette aussi NaN et l'infini
+        raise InvalidReport(f"{key} hors plage ({low} a {high})")
+    return value
+
+
+def parse_report(data) -> dict:
+    """Valide le JSON d'un rapport ; renvoie un dict normalise ou leve InvalidReport."""
+    if not isinstance(data, dict):
+        raise InvalidReport("le corps doit etre un objet JSON")
+    battery_id = data.get("battery_mac")
+    if not isinstance(battery_id, str) or not BATTERY_ID_RE.fullmatch(battery_id):
+        raise InvalidReport("battery_mac manquant ou invalide")
+    discharge_off = data.get("discharge_off")
+    if not isinstance(discharge_off, bool):
+        raise InvalidReport("discharge_off doit etre un booleen")
+    return {
+        "mac": battery_id,
+        "voltage": float(_number(data, "voltage_v")),
+        "current": float(_number(data, "current_a")),
+        "soc": _number(data, "soc_pct", integer=True),
+        "soh": _number(data, "soh_pct", integer=True),
+        "discharge_off": discharge_off,
+    }
+
+
 # ---------------- Serveur HTTP ----------------
+class HttpError(Exception):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send_json(self, status: int, payload: dict):
         body = json.dumps(payload).encode()
@@ -169,41 +238,74 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _dispatch(self, handler):
+        try:
+            handler()
+        except HttpError as e:
+            self._send_json(e.status, {"error": e.message})
+        except Exception:
+            traceback.print_exc()
+            self._send_json(500, {"error": "erreur interne"})
+
+    def _require_api_key(self):
+        if not api_key_valid(self.headers.get("X-API-Key")):
+            print(f"Cle API invalide depuis {self.client_address[0]}", flush=True)
+            raise HttpError(401, "cle API invalide")
+
+    def _read_json_body(self):
+        length_header = self.headers.get("Content-Length")
+        if length_header is None:
+            raise HttpError(411, "en-tete Content-Length requis")
+        try:
+            length = int(length_header)
+        except ValueError:
+            raise HttpError(400, "en-tete Content-Length invalide")
+        if length <= 0:
+            raise HttpError(400, "corps de requete vide")
+        if length > MAX_BODY_SIZE:
+            raise HttpError(413, f"corps de requete trop grand (max {MAX_BODY_SIZE} octets)")
+        body = self.rfile.read(length)
+        if len(body) != length:
+            raise HttpError(400, "corps de requete incomplet")
+        try:
+            return json.loads(body)
+        except (ValueError, RecursionError):
+            raise HttpError(400, "JSON invalide")
+
     def do_GET(self):
+        self._dispatch(self._handle_get)
+
+    def do_POST(self):
+        self._dispatch(self._handle_post)
+
+    def _handle_get(self):
         if self.path == "/health":
             self._send_json(200, {"status": "ok"})
         elif self.path == "/status":
+            self._require_api_key()
             self._send_json(200, get_all_status())
         else:
-            self._send_json(404, {"error": "not found"})
+            raise HttpError(404, "not found")
 
-    def do_POST(self):
+    def _handle_post(self):
         if self.path != "/report":
-            self._send_json(404, {"error": "not found"})
-            return
+            raise HttpError(404, "not found")
+        self._require_api_key()
 
-        if self.headers.get("X-API-Key") != API_KEY:
-            self._send_json(401, {"error": "cle API invalide"})
-            return
-
-        length = int(self.headers.get("Content-Length", 0))
         try:
-            data = json.loads(self.rfile.read(length))
-            mac = data["battery_mac"]
-            voltage = float(data["voltage_v"])
-            current = float(data["current_a"])
-            soc = int(data["soc_pct"])
-            soh = int(data["soh_pct"])
-            discharge_off = bool(data["discharge_off"])
-        except (KeyError, ValueError, json.JSONDecodeError):
-            self._send_json(400, {"error": "payload invalide"})
-            return
+            report = parse_report(self._read_json_body())
+        except InvalidReport as e:
+            raise HttpError(400, str(e))
 
+        mac = report["mac"]
         if mac not in BATTERIES:
-            self._send_json(404, {"error": "batterie inconnue"})
-            return
+            print(f"Rapport refuse : batterie inconnue {mac}", flush=True)
+            raise HttpError(404, "batterie inconnue")
 
         slug = BATTERIES[mac]
+        voltage, current = report["voltage"], report["current"]
+        soc, soh = report["soc"], report["soh"]
+        discharge_off = report["discharge_off"]
 
         with db() as conn:
             conn.execute(
@@ -238,7 +340,22 @@ class Handler(BaseHTTPRequestHandler):
         print(f"{self.address_string()} - {fmt % args}", flush=True)
 
 
+def check_api_key():
+    if not API_KEY:
+        print("ERREUR : l'option api_key est vide, tous les rapports seront refuses.", flush=True)
+    elif API_KEY in DEFAULT_API_KEYS or len(API_KEY) < MIN_API_KEY_LENGTH:
+        print(
+            "ATTENTION : la cle API est une valeur d'exemple ou fait moins de "
+            f"{MIN_API_KEY_LENGTH} caracteres. Remplace-la par une valeur longue et "
+            "aleatoire (ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\") "
+            "dans l'add-on ET dans la passerelle.",
+            flush=True,
+        )
+
+
 def main():
+    check_api_key()
+
     # setup mqtt
     if MQTT_USERNAME:
         mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)

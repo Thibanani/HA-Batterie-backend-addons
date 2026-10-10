@@ -13,6 +13,6 @@ ports:
 options:
   api_key: "change-moi-en-vrai-secret"
 schema:
-  api_key: str
+  api_key: password
 services:
   - "mqtt:want"
