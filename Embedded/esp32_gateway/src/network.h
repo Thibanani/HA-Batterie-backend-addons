@@ -12,6 +12,10 @@ bool networkIsConnected();
 // Etablit la liaison internet si elle ne l'est pas deja. Renvoie true en cas de succes.
 bool networkConnect();
 
+// Coupe la liaison et la radio avant la mise en veille (en GSM : extinction du modem,
+// qui reste alimente pendant le deep sleep de l'ESP32).
+void networkStop();
+
 // Envoie un rapport au serveur ; renvoie true si le serveur a repondu 200.
 // cmdOut recoit la commande eventuellement renvoyee par le serveur.
 bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut);

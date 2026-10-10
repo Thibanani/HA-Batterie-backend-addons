@@ -18,6 +18,8 @@ extern const size_t        BATTERY_COUNT;
 // ---------------- Reglages ----------------
 static const uint32_t CYCLE_INTERVAL_MS      = 60000;  // duree entre deux cycles (test)
 static const uint32_t BLE_CONNECT_TIMEOUT_MS = 5000;
+static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
+static const uint32_t HTTP_TIMEOUT_MS        = 10000;  // connexion TCP, negociation TLS et reponse
 static const int      BLE_CONNECT_ATTEMPTS   = 2;
 static const uint32_t STATUS_TIMEOUT_MS      = 4000;   // attente maximale de la trame de statut
 static const uint32_t FRAME_QUIET_MS         = 150;    // silence apres le dernier morceau = trame complete

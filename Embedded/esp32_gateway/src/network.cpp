@@ -19,18 +19,26 @@ bool networkIsConnected() {
 bool networkConnect() {
   if (networkIsConnected()) return true;
   DEBUG_PRINTF("Connexion WiFi a %s...\n", WIFI_SSID);
+  WiFi.persistent(false);   // n'ecrit pas les identifiants en flash a chaque reveil
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   uint32_t start = millis();
-  while (!networkIsConnected() && millis() - start < 20000) {
-    delay(500);
-    DEBUG_PRINT(".");
+  while (!networkIsConnected() && millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
+    delay(100);             // scrutation fine : la radio s'arrete des que possible
   }
   if (networkIsConnected()) {
-    DEBUG_PRINTLN("\nWiFi connecte, IP: " + WiFi.localIP().toString());
+    DEBUG_PRINTF("WiFi connecte en %u ms, IP : %s\n", (unsigned)(millis() - start),
+                 WiFi.localIP().toString().c_str());
     return true;
   }
-  DEBUG_PRINTLN("\nEchec de connexion WiFi.");
+  DEBUG_PRINTLN("Echec de connexion WiFi.");
+  networkStop();
   return false;
+}
+
+void networkStop() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
 }
 
 // Extrait la derniere commande de decharge de {"commands": [...]}.
@@ -65,6 +73,7 @@ bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut) 
   }
 
   WiFiClientSecure client;
+  client.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);   // en secondes ; 120 s par defaut
   if (SERVER_ROOT_CA != nullptr) {
     client.setCACert(SERVER_ROOT_CA);   // chaine de certificats ET nom d'hote verifies
   } else {
@@ -73,6 +82,8 @@ bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut) 
   }
 
   HTTPClient http;
+  http.setConnectTimeout(HTTP_TIMEOUT_MS);
+  http.setTimeout(HTTP_TIMEOUT_MS);
   if (!http.begin(client, SERVER_URL)) {
     DEBUG_PRINTLN("[HTTP] URL du serveur invalide.");
     return false;

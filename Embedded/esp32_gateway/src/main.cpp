@@ -49,7 +49,17 @@ void runCycle() {
     slots[i].needsReport = slots[i].reading.valid;
   }
 
-  if (!networkIsConnected()) networkConnect();
+  // Rien a envoyer : la radio reseau n'est pas allumee (economie d'energie).
+  bool anyValid = false;
+  for (size_t i = 0; i < BATTERY_COUNT; i++) anyValid = anyValid || slots[i].needsReport;
+  if (!anyValid) {
+    DEBUG_PRINTLN("[CYCLE] Aucune batterie lue : reseau non active.");
+    return;
+  }
+  if (!networkConnect()) {
+    DEBUG_PRINTLN("[CYCLE] Pas de reseau : rapports au prochain cycle.");
+    return;
+  }
 
   // 2 et 3. Rapport, puis commande eventuelle, puis rapport de confirmation
   for (int round = 0; round < MAX_ROUNDS; round++) {
@@ -82,13 +92,15 @@ void setup() {
   DEBUG_PRINTLN();
   DEBUG_PRINTLN("=== Passerelle ESP32 <-> batterie BLE <-> serveur ===");
 
-  networkConnect();
+  // Le reseau n'est plus allume ici : seulement apres les lectures BLE,
+  // et uniquement s'il y a quelque chose a envoyer (voir runCycle).
   bleInit();
 }
 
 void loop() {
   DEBUG_PRINTLN("\n--- Nouveau cycle ---");
   runCycle();
+  networkStop();
   DEBUG_PRINTF("Prochain cycle dans %u s\n", (unsigned)(CYCLE_INTERVAL_MS / 1000));
   DEBUG_FLUSH();
   esp_sleep_enable_timer_wakeup(CYCLE_INTERVAL_MS * uS_TO_mS_FACTOR);
