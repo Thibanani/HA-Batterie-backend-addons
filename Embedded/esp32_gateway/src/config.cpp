@@ -1,5 +1,6 @@
 #include <NimBLEDevice.h>   // BLE_ADDR_PUBLIC
 #include "config.h"
+#include "root_ca.h"
 
 // Secrets (WiFi, cle API) : include/secrets.h, ignore par git.
 #if __has_include("secrets.h")
@@ -13,6 +14,9 @@
 const char* WIFI_SSID     = SECRET_WIFI_SSID;
 const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
 const char* SERVER_URL    = "https://batteries.thibaultbansha.ovh/report";
+// Racines de confiance du serveur (src/root_ca.h). nullptr = aucune verification :
+// n'importe qui sur le chemin reseau pourrait lire la cle API et forger des commandes.
+const char* SERVER_ROOT_CA = ROOT_CA_BUNDLE;
 const char* API_KEY       = SECRET_API_KEY;
 
 const BatteryConfig BATTERIES[] = {

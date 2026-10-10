@@ -9,6 +9,7 @@
 extern const char* WIFI_SSID;          // secrets : include/secrets.h
 extern const char* WIFI_PASSWORD;
 extern const char* SERVER_URL;
+extern const char* SERVER_ROOT_CA;     // certificats racines acceptes (nullptr = pas de verification)
 extern const char* API_KEY;            // identique a l'option "api_key" de l'add-on
 
 extern const BatteryConfig BATTERIES[];
@@ -22,5 +23,6 @@ static const uint32_t STATUS_TIMEOUT_MS      = 4000;   // attente maximale de la
 static const uint32_t FRAME_QUIET_MS         = 150;    // silence apres le dernier morceau = trame complete
 static const uint32_t AFTER_COMMAND_DELAY_MS = 800;    // pause entre l'ecriture d'une commande et la relecture
 static const int      MAX_ROUNDS             = 3;      // rapports successifs par cycle (rapport + confirmations)
+static const size_t   MAX_RESPONSE_SIZE      = 512;    // taille maximale lue dans une reponse du serveur
 static const bool     DEBUG_DUMP_FRAME       = false;  // true : affiche chaque trame recue en hexadecimal (build debug seulement)
                                                         // (utile pour valider les offsets sur la vraie batterie)

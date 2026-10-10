@@ -65,10 +65,18 @@ bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut) 
   }
 
   WiFiClientSecure client;
-  client.setInsecure(); // OK pour un test ; a remplacer par une verification de certificat en production.
+  if (SERVER_ROOT_CA != nullptr) {
+    client.setCACert(SERVER_ROOT_CA);   // chaine de certificats ET nom d'hote verifies
+  } else {
+    client.setInsecure();
+    DEBUG_PRINTLN("[HTTP] ATTENTION : certificat du serveur NON verifie (SERVER_ROOT_CA = nullptr).");
+  }
 
   HTTPClient http;
-  http.begin(client, SERVER_URL);
+  if (!http.begin(client, SERVER_URL)) {
+    DEBUG_PRINTLN("[HTTP] URL du serveur invalide.");
+    return false;
+  }
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-API-Key", API_KEY);
 
@@ -96,6 +104,15 @@ bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut) 
 #endif
     http.end();
     return false;
+  }
+
+  // Reponse attendue : {"commands": [...]}, quelques dizaines d'octets.
+  // Une reponse plus grande n'est pas lue (protection de la memoire).
+  int size = http.getSize();
+  if (size > (int)MAX_RESPONSE_SIZE) {
+    DEBUG_PRINTF("[HTTP] Reponse trop grande (%d octets) : ignoree.\n", size);
+    http.end();
+    return true;   // rapport accepte (200), sans commande exploitable
   }
 
   String body = http.getString();
