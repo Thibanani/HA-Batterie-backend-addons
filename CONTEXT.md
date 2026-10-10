@@ -48,7 +48,12 @@ HA-Batterie-backend-addons/
     ├── bms_protocol.h               # protocole BMS partagé (passerelle + simulateur)
     ├── esp32_gateway/               # PROJET PLATFORMIO (passerelle)
     │   ├── platformio.ini           # envs : lilygo-t-sim7080g-s3 (défaut), esp32dev
-    │   └── src/main.cpp             # ex-esp32_gateway.ino
+    │   └── src/
+    │       ├── main.cpp             # cycle complet + deep sleep
+    │       ├── ble_battery.h/.cpp   # dialogue BLE avec le BMS (lecture, commande)
+    │       ├── network.h/.cpp       # internet + HTTP (WiFi ; GSM a venir, meme interface)
+    │       ├── config.h/.cpp        # reglages + secrets/batteries a personnaliser
+    │       └── types.h              # BatteryConfig, BatteryReading, Cmd
     ├── esp32_battery_simulator/     # sketch Arduino IDE : faux BMS en périphérique BLE
     └── test_http_report_mock/       # sketch Arduino IDE : POST /report en WiFi, sans BLE
 ```
@@ -86,7 +91,7 @@ HA-Batterie-backend-addons/
 - ⚠️ Offsets issus de projets open source (litime-ble-hacs, pq_bms_bluetooth),
   **pas encore validés sur la vraie batterie** → `DEBUG_DUMP_FRAME = true` dans la passerelle pour vérifier.
 
-### 3.3 Passerelle (`Embedded/esp32_gateway/src/main.cpp`)
+### 3.3 Passerelle (`Embedded/esp32_gateway/src/`)
 - Version de cette branche : **WiFi** (`WiFiClientSecure` + `setInsecure()`), pas encore GSM.
 - Cycle : lecture BLE de chaque batterie (`readBattery`) → connexion WiFi → jusqu'à
   `MAX_ROUNDS = 3` tours "rapport → commande → `applyCommand` (écrit, relit) → rapport de confirmation"

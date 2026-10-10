@@ -1,0 +1,26 @@
+/*
+ * Configuration de la passerelle.
+ * Les valeurs a personnaliser (reseau, serveur, batteries) sont dans config.cpp.
+ */
+#pragma once
+#include "types.h"
+
+// ---------------- A personnaliser (definis dans config.cpp) ----------------
+extern const char* WIFI_SSID;
+extern const char* WIFI_PASSWORD;
+extern const char* SERVER_URL;
+extern const char* API_KEY;            // identique a l'option "api_key" de l'add-on
+
+extern const BatteryConfig BATTERIES[];
+extern const size_t        BATTERY_COUNT;
+
+// ---------------- Reglages ----------------
+static const uint32_t CYCLE_INTERVAL_MS      = 60000;  // duree entre deux cycles (test)
+static const uint32_t BLE_CONNECT_TIMEOUT_MS = 5000;
+static const int      BLE_CONNECT_ATTEMPTS   = 2;
+static const uint32_t STATUS_TIMEOUT_MS      = 4000;   // attente maximale de la trame de statut
+static const uint32_t FRAME_QUIET_MS         = 150;    // silence apres le dernier morceau = trame complete
+static const uint32_t AFTER_COMMAND_DELAY_MS = 800;    // pause entre l'ecriture d'une commande et la relecture
+static const int      MAX_ROUNDS             = 3;      // rapports successifs par cycle (rapport + confirmations)
+static const bool     DEBUG_DUMP_FRAME       = false;  // true : affiche chaque trame recue en hexadecimal
+                                                        // (utile pour valider les offsets sur la vraie batterie)
