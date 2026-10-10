@@ -31,16 +31,33 @@ API_KEY = os.environ["API_KEY"]
 KNOWN_ID = next(iter(main.BATTERIES))
 
 
+class FakeMessageInfo:
+    def wait_for_publish(self, timeout=None):
+        pass
+
+
 class FakeMqtt:
-    def __init__(self):
+    def __init__(self, connected=True):
         self.published = []
         self.subscribed = []
+        self.connected = connected
+        self.disconnected = False
 
     def publish(self, topic, payload=None, qos=0, retain=False):
         self.published.append((topic, payload, retain))
+        return FakeMessageInfo()
 
     def subscribe(self, topic, qos=0):
         self.subscribed.append(topic)
+
+    def is_connected(self):
+        return self.connected
+
+    def disconnect(self):
+        self.disconnected = True
+
+    def loop_stop(self):
+        pass
 
 
 def valid_report(**overrides):
@@ -328,6 +345,53 @@ class MqttCallbackTests(BackendTestCase):
         )
         configs = [t for t, _, retain in self.mqtt.published if t.endswith("/config") and retain]
         self.assertEqual(len(configs), 5 * len(main.BATTERIES))
+
+
+class HomeAssistantEntityTests(BackendTestCase):
+    def discovery(self, slug):
+        main.publish_discovery(self.mqtt, slug)
+        return {t: json.loads(p) for t, p, _ in self.mqtt.published if t.endswith("/config")}
+
+    def test_sensors_have_statistics_availability_and_expiry(self):
+        configs = self.discovery("battery_1")
+        voltage = configs["homeassistant/sensor/battery_1_voltage/config"]
+        self.assertEqual(voltage["state_class"], "measurement")
+        self.assertEqual(voltage["availability_topic"], main.AVAILABILITY_TOPIC)
+        self.assertEqual(voltage["expire_after"], main.SENSOR_EXPIRE_AFTER)
+        switch = configs["homeassistant/switch/battery_1_discharge/config"]
+        self.assertEqual(switch["availability_topic"], main.AVAILABILITY_TOPIC)
+        self.assertNotIn("expire_after", switch)
+
+    def test_expiry_can_be_disabled(self):
+        saved, main.SENSOR_EXPIRE_AFTER = main.SENSOR_EXPIRE_AFTER, 0
+        try:
+            configs = self.discovery("battery_1")
+        finally:
+            main.SENSOR_EXPIRE_AFTER = saved
+        self.assertNotIn("expire_after", configs["homeassistant/sensor/battery_1_soc/config"])
+
+    def test_online_is_announced_after_discovery(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            main.on_connect(self.mqtt, None, {}, 0)
+        self.assertEqual(self.mqtt.published[-1], (main.AVAILABILITY_TOPIC, "online", True))
+
+    def test_clean_stop_announces_offline(self):
+        main.stop_mqtt()
+        self.assertEqual(self.mqtt.published, [(main.AVAILABILITY_TOPIC, "offline", True)])
+        self.assertTrue(self.mqtt.disconnected)
+
+    def test_stop_without_connection_only_disconnects(self):
+        self.mqtt.connected = False
+        main.stop_mqtt()
+        self.assertEqual(self.mqtt.published, [])
+        self.assertTrue(self.mqtt.disconnected)
+
+    def test_invalid_integer_option_falls_back_to_default(self):
+        os.environ["TEST_ENTIER"] = "null"
+        try:
+            self.assertEqual(main._int_env("TEST_ENTIER", 900), 900)
+        finally:
+            del os.environ["TEST_ENTIER"]
 
 
 if __name__ == "__main__":

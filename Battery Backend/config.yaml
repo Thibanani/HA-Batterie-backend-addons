@@ -13,7 +13,9 @@ ports:
   8000/tcp: 8000
 options:
   api_key: "change-moi-en-vrai-secret"
+  sensor_expire_after: 900
 schema:
   api_key: password
+  sensor_expire_after: int(0,86400)
 services:
   - "mqtt:want"

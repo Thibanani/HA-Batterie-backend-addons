@@ -34,6 +34,20 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
 DB_PATH = os.environ.get("DB_PATH", "/data/batteries.db")
 DISCOVERY_PREFIX = "homeassistant"
 
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, ""))
+    except ValueError:
+        return default
+
+
+# Sans rapport pendant ce delai (s), les capteurs passent "indisponible" dans HA
+# (passerelle muette). 0 = jamais. A regler a ~3x l'intervalle de la passerelle.
+SENSOR_EXPIRE_AFTER = max(0, _int_env("SENSOR_EXPIRE_AFTER", 900))
+# Etat de l'add-on : "offline" est publie par le broker (LWT) si l'add-on disparait.
+AVAILABILITY_TOPIC = "battery_backend/status"
+
 # Cles livrees en exemple (add-on, sketches) : a ne jamais garder en service.
 DEFAULT_API_KEYS = {"change-moi", "change-moi-en-vrai-secret", "TON_API_KEY"}
 MIN_API_KEY_LENGTH = 16
@@ -104,25 +118,34 @@ def publish_discovery(client, slug: str):
         "identifiers": [slug],
         "name": slug.replace("_", " ").title(),
         "manufacturer": "PowerQueen",
+        "model": "LiFePO4 (BMS Bluetooth)",
     }
 
+    # cle -> (unite, device_class, precision affichee, icone)
     sensors = {
-        "voltage": ("V", "voltage"),
-        "current": ("A", "current"),
-        "soc": ("%", "battery"),
-        "soh": ("%", None),
+        "voltage": ("V", "voltage", 2, None),
+        "current": ("A", "current", 2, None),
+        "soc": ("%", "battery", 0, None),
+        "soh": ("%", None, 0, "mdi:battery-heart-variant"),
     }
-    for key, (unit, device_class) in sensors.items():
+    for key, (unit, device_class, precision, icon) in sensors.items():
         payload = {
             "name": f"{slug} {key}",
             "unique_id": f"{slug}_{key}",
             "state_topic": f"{DISCOVERY_PREFIX}/sensor/{slug}/state",
             "unit_of_measurement": unit,
             "value_template": f"{{{{ value_json.{key} }}}}",
+            "state_class": "measurement",  # historique long terme (statistiques HA)
+            "suggested_display_precision": precision,
+            "availability_topic": AVAILABILITY_TOPIC,
             "device": device,
         }
         if device_class:
             payload["device_class"] = device_class
+        if icon:
+            payload["icon"] = icon
+        if SENSOR_EXPIRE_AFTER:
+            payload["expire_after"] = SENSOR_EXPIRE_AFTER
         client.publish(
             f"{DISCOVERY_PREFIX}/sensor/{slug}_{key}/config",
             json.dumps(payload), retain=True,
@@ -135,6 +158,8 @@ def publish_discovery(client, slug: str):
         "command_topic": command_topic(slug),
         "payload_on": "ON",
         "payload_off": "OFF",
+        "icon": "mdi:battery-arrow-down",
+        "availability_topic": AVAILABILITY_TOPIC,
         "device": device,
     }
     client.publish(
@@ -175,6 +200,7 @@ def on_connect(client, userdata, flags, rc):
     for slug in BATTERIES.values():
         publish_discovery(client, slug)
         client.subscribe(command_topic(slug), qos=1)
+    client.publish(AVAILABILITY_TOPIC, "online", qos=1, retain=True)
 
 
 @mqtt_callback
@@ -455,6 +481,8 @@ def start_mqtt():
     mqtt_client.on_disconnect = on_disconnect
     mqtt_client.on_message = on_message
     mqtt_client.reconnect_delay_set(min_delay=1, max_delay=120)
+    # Publie "offline" a notre place si l'add-on disparait sans se deconnecter.
+    mqtt_client.will_set(AVAILABILITY_TOPIC, "offline", qos=1, retain=True)
     # connect_async + loop_start : le thread paho retente la connexion (premiere
     # comprise) tant que le broker est injoignable, le serveur HTTP demarre quand meme.
     mqtt_client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
@@ -462,6 +490,12 @@ def start_mqtt():
 
 
 def stop_mqtt():
+    # Une deconnexion volontaire ne declenche pas le LWT : on annonce "offline" nous-memes.
+    if mqtt_client.is_connected():
+        try:
+            mqtt_client.publish(AVAILABILITY_TOPIC, "offline", qos=1, retain=True).wait_for_publish(timeout=2)
+        except (RuntimeError, ValueError):
+            pass
     mqtt_client.disconnect()
     mqtt_client.loop_stop()
 

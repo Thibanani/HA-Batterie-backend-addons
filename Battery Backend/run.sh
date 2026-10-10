@@ -1,6 +1,7 @@
 #!/usr/bin/with-contenv bashio
 
 export API_KEY="$(bashio::config 'api_key')"
+export SENSOR_EXPIRE_AFTER="$(bashio::config 'sensor_expire_after')"
 export MQTT_HOST="$(bashio::services mqtt 'host')"
 export MQTT_PORT="$(bashio::services mqtt 'port')"
 export MQTT_USERNAME="$(bashio::services mqtt 'username')"
