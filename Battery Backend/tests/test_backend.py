@@ -12,6 +12,7 @@ import io
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -386,6 +387,16 @@ class HomeAssistantEntityTests(BackendTestCase):
         main.stop_mqtt()
         self.assertEqual(self.mqtt.published, [])
         self.assertTrue(self.mqtt.disconnected)
+
+    def test_null_mqtt_service_values_do_not_crash_startup(self):
+        # Broker absent : bashio peut renvoyer "null" ou rien pour le service MQTT.
+        env = dict(os.environ, MQTT_HOST="", MQTT_PORT="null")
+        result = subprocess.run(
+            [sys.executable, "-c", "import main; print(main.MQTT_HOST, main.MQTT_PORT)"],
+            cwd=str(Path(main.__file__).parent), env=env, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip().splitlines()[-1], "localhost 1883")
 
     def test_invalid_integer_option_falls_back_to_default_value(self):
         os.environ["TEST_ENTIER"] = "null"

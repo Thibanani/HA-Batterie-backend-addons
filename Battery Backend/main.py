@@ -29,20 +29,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import paho.mqtt.client as mqtt
 
-API_KEY = os.environ.get("API_KEY", "change-moi")
-MQTT_HOST = os.environ.get("MQTT_HOST", "localhost")
-MQTT_PORT = int(os.environ.get("MQTT_PORT") or 1883)
-MQTT_USERNAME = os.environ.get("MQTT_USERNAME") or None
-MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
-DB_PATH = os.environ.get("DB_PATH", "/data/batteries.db")
-DISCOVERY_PREFIX = "homeassistant"
-
 
 def _int_env(name: str, default: int) -> int:
+    """Entier lu dans l'environnement ; valeur absente ou invalide ("null"...) -> defaut."""
     try:
         return int(os.environ.get(name, ""))
     except ValueError:
         return default
+
+
+API_KEY = os.environ.get("API_KEY", "change-moi")
+MQTT_HOST = os.environ.get("MQTT_HOST") or "localhost"
+MQTT_PORT = _int_env("MQTT_PORT", 1883)
+MQTT_USERNAME = os.environ.get("MQTT_USERNAME") or None
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
+DB_PATH = os.environ.get("DB_PATH", "/data/batteries.db")
+DISCOVERY_PREFIX = "homeassistant"
 
 
 # Sans rapport pendant ce delai (s), les capteurs passent "indisponible" dans HA

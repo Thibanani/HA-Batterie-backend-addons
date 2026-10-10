@@ -14,7 +14,8 @@
   d'exemple ou fait moins de 16 caractères.
 
 ### Fiabilité
-- L'add-on démarre même si le broker MQTT est absent et se reconnecte automatiquement.
+- L'add-on démarre même si le broker MQTT est absent (y compris quand le service MQTT
+  n'est pas installé) et se reconnecte automatiquement.
 - Arrêt propre (SIGTERM) ; watchdog du Supervisor sur `/health`.
 - Entités indisponibles si l'add-on s'arrête (LWT) ou si la passerelle ne remonte plus
   rien pendant `sensor_expire_after` secondes.
