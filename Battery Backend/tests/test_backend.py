@@ -269,5 +269,66 @@ class PendingCommandTests(BackendTestCase):
         self.assertEqual(self.post_report(valid_report())[1], {"commands": []})
 
 
+class FakeMessage:
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.payload = payload
+
+
+class MqttCallbackTests(BackendTestCase):
+    def pending(self):
+        with main.db() as conn:
+            return dict(conn.execute("SELECT mac, action FROM pending_commands").fetchall())
+
+    def switch_message(self, payload, slug=None):
+        slug = slug or main.BATTERIES[KNOWN_ID]
+        with contextlib.redirect_stdout(io.StringIO()):
+            main.on_message(self.mqtt, None, FakeMessage(main.command_topic(slug), payload))
+
+    def test_off_and_on_queue_the_matching_command(self):
+        self.switch_message(b"OFF")
+        self.assertEqual(self.pending(), {KNOWN_ID: "discharge_off"})
+        self.switch_message(b"ON")
+        self.assertEqual(self.pending(), {KNOWN_ID: "discharge_on"})
+
+    def test_unexpected_payloads_are_ignored(self):
+        for payload in [b"", b"on", b"TOGGLE", b"\xff\xfe", b"OFF; DROP TABLE"]:
+            with self.subTest(payload=payload):
+                self.switch_message(payload)
+                self.assertEqual(self.pending(), {})
+
+    def test_unknown_topic_is_ignored(self):
+        self.switch_message(b"OFF", slug="inconnue")
+        self.assertEqual(self.pending(), {})
+
+    def test_callback_exception_does_not_escape(self):
+        saved = main.db
+
+        def broken_db():
+            raise RuntimeError("base indisponible")
+
+        main.db = broken_db
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                main.on_message(self.mqtt, None, FakeMessage(main.command_topic(main.BATTERIES[KNOWN_ID]), b"OFF"))
+        finally:
+            main.db = saved
+
+    def test_refused_connection_publishes_nothing(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            main.on_connect(self.mqtt, None, {}, 5)
+        self.assertEqual((self.mqtt.published, self.mqtt.subscribed), ([], []))
+
+    def test_connection_publishes_discovery_and_subscribes(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            main.on_connect(self.mqtt, None, {}, 0)
+        self.assertEqual(
+            sorted(self.mqtt.subscribed),
+            sorted(main.command_topic(s) for s in main.BATTERIES.values()),
+        )
+        configs = [t for t, _, retain in self.mqtt.published if t.endswith("/config") and retain]
+        self.assertEqual(len(configs), 5 * len(main.BATTERIES))
+
+
 if __name__ == "__main__":
     unittest.main()

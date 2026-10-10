@@ -17,6 +17,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import sqlite3
 import threading
 import traceback
@@ -131,7 +132,7 @@ def publish_discovery(client, slug: str):
         "name": f"{slug} decharge",
         "unique_id": f"{slug}_discharge",
         "state_topic": f"{DISCOVERY_PREFIX}/switch/{slug}_discharge/state",
-        "command_topic": f"{DISCOVERY_PREFIX}/switch/{slug}_discharge/set",
+        "command_topic": command_topic(slug),
         "payload_on": "ON",
         "payload_off": "OFF",
         "device": device,
@@ -142,20 +143,62 @@ def publish_discovery(client, slug: str):
     )
 
 
+def command_topic(slug: str) -> str:
+    return f"{DISCOVERY_PREFIX}/switch/{slug}_discharge/set"
+
+
+# Seules ces deux valeurs sont acceptees : une valeur inattendue ne doit jamais
+# retablir (ou couper) la decharge par erreur.
+SWITCH_ACTIONS = {"OFF": "discharge_off", "ON": "discharge_on"}
+
+
+def mqtt_callback(func):
+    """Une exception dans un callback paho 1.6 arrete la boucle reseau : on la contient."""
+
+    def wrapper(*args, **kwargs):
+        try:
+            func(*args, **kwargs)
+        except Exception:
+            log(f"Erreur dans le callback MQTT {func.__name__} :")
+            traceback.print_exc()
+
+    wrapper.__name__ = func.__name__
+    return wrapper
+
+
+@mqtt_callback
 def on_connect(client, userdata, flags, rc):
-    log(f"MQTT connecte (code {rc})")
-    for mac, slug in BATTERIES.items():
+    if rc != 0:
+        log(f"Connexion MQTT refusee : {mqtt.connack_string(rc)} (nouvel essai automatique)")
+        return
+    log("MQTT connecte")
+    for slug in BATTERIES.values():
         publish_discovery(client, slug)
-        client.subscribe(f"{DISCOVERY_PREFIX}/switch/{slug}_discharge/set")
+        client.subscribe(command_topic(slug), qos=1)
 
 
+@mqtt_callback
+def on_connect_fail(client, userdata):
+    log(f"Broker MQTT injoignable ({MQTT_HOST}:{MQTT_PORT}), nouvel essai automatique")
+
+
+@mqtt_callback
+def on_disconnect(client, userdata, rc):
+    if rc != 0:
+        log(f"MQTT deconnecte de facon inattendue (code {rc}), reconnexion automatique")
+
+
+@mqtt_callback
 def on_message(client, userdata, msg):
     # L'utilisateur a bascule le switch "decharge" dans Home Assistant.
-    slug = msg.topic.split("/")[2].replace("_discharge", "")
-    mac = next((m for m, s in BATTERIES.items() if s == slug), None)
+    mac = next((m for m, s in BATTERIES.items() if command_topic(s) == msg.topic), None)
     if not mac:
         return
-    action = "discharge_off" if msg.payload.decode() == "OFF" else "discharge_on"
+    payload = msg.payload.decode("ascii", errors="replace").strip()
+    action = SWITCH_ACTIONS.get(payload)
+    if action is None:
+        log(f"Commande MQTT ignoree pour {mac} : valeur inattendue {payload[:20]!r}")
+        return
     with db() as conn:
         conn.execute(
             "INSERT INTO pending_commands (mac, action) VALUES (?, ?) "
@@ -404,25 +447,47 @@ def check_api_key():
         )
 
 
-def main():
-    check_api_key()
-
-    # setup mqtt
+def start_mqtt():
     if MQTT_USERNAME:
         mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-
     mqtt_client.on_connect = on_connect
+    mqtt_client.on_connect_fail = on_connect_fail
+    mqtt_client.on_disconnect = on_disconnect
     mqtt_client.on_message = on_message
-
-    # connexion au service mqtt
-    init_db()
-    mqtt_client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    mqtt_client.reconnect_delay_set(min_delay=1, max_delay=120)
+    # connect_async + loop_start : le thread paho retente la connexion (premiere
+    # comprise) tant que le broker est injoignable, le serveur HTTP demarre quand meme.
+    mqtt_client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
     mqtt_client.loop_start()
 
-    # Demarrage du serveur http
+
+def stop_mqtt():
+    mqtt_client.disconnect()
+    mqtt_client.loop_stop()
+
+
+def main():
+    check_api_key()
+    init_db()
+    start_mqtt()
+
     server = make_server()
+
+    def request_stop(signum, frame):
+        log("Arret demande, fermeture propre...")
+        # shutdown() attend la fin de serve_forever() : a appeler depuis un autre thread.
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+
     log(f"Serveur demarre sur le port {HTTP_PORT}")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        stop_mqtt()
+        log("Serveur arrete")
 
 
 if __name__ == "__main__":
