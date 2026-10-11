@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_wifi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "network.h"
@@ -37,8 +38,12 @@ bool networkConnect() {
 }
 
 void networkStop() {
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+  // Avant un deep sleep, arreter la radio suffit (la memoire est perdue de toute facon).
+  // WiFi.mode(WIFI_OFF) libere aussi le pilote, ce qui expire juste apres une deconnexion
+  // ("wifi:timeout when WiFi un-init").
+  if (WiFi.getMode() == WIFI_OFF) return;   // WiFi jamais demarre pendant ce cycle
+  esp_wifi_disconnect();
+  esp_wifi_stop();
 }
 
 // Extrait la derniere commande de decharge de {"commands": [...]}.
