@@ -36,8 +36,11 @@ pio run                                  # env par défaut : lilygo-debug
 pio run -e lilygo-release                # firmware sans traces série
 pio run -e lilygo-debug -t upload && pio device monitor
 ```
-Secrets : copier `include/secrets.example.h` en `include/secrets.h` (ignoré par git) et le remplir.
-Sans ce fichier, la compilation utilise les valeurs factices et l'affiche en avertissement.
+Secrets : copier `include/secrets.example.h` en `include/secrets.h` (ignoré par git) et le remplir
+(clé API, code PIN de la SIM s'il est actif, WiFi du banc). Sans ce fichier, la compilation
+utilise les valeurs factices et l'affiche en avertissement.
+Mise au point du modem : décommenter `-DGSM_DUMP_AT_COMMANDS` dans `platformio.ini` (build debug)
+pour voir tout le dialogue AT.
 
 ⚠️ **Limite Windows 260 caractères** : depuis un worktree (`.claude/worktrees/...`) les chemins
 de `.pio/libdeps/.../NimBLE-Arduino/...` sont trop longs et la compilation échoue avec des
@@ -67,8 +70,17 @@ Encore des sketches Arduino IDE (`.ino`) ; ils incluent `"../bms_protocol.h"`.
   ajouter sa racine dans `src/root_ca.h` (vérifier avec `openssl s_client -showcerts`).
 - Les bornes de validation (tension, courant, SOC/SOH) sont les mêmes dans `config.h` et dans
   `LIMITS` de `main.py` : les modifier ensemble.
-- Cible matérielle finale : LILYGO T-SIM7080G-S3 — modem TX=GPIO5, RX=GPIO4, PWRKEY=GPIO41 ;
-  PMU AXP2101 en I2C SDA=18 / SCL=17 selon la révision.
+- Liaison : `network.h` est l'interface ; `network_gsm.cpp` (LTE-M, envs lilygo-*) ou
+  `network_wifi.cpp` (banc, envs esp32dev-*), un seul compilé (`-DNETWORK_GSM` / `-DNETWORK_WIFI`).
+  Le HTTPS est commun (`report.cpp`) : le TLS reste fait par l'ESP32 (SSLClient + `root_ca.h`),
+  jamais par le modem.
+- LTE-M : chaque `write()` coûte un échange AT et des octets facturés → regrouper les écritures
+  (`BufferedClient`). Ne pas utiliser `gprsConnect()` de TinyGSM pour le SIM7080 (voir
+  `network_gsm.cpp`). Toute attente modem est bornée (`config.h`) et couverte par le watchdog.
+- Matériel : LILYGO T-SIM7080G-S3 — UART modem RX=GPIO4 / TX=GPIO5 (vu de l'ESP32),
+  PWRKEY=GPIO41 (HIGH = appui), DTR=GPIO42 ; PMU AXP2101 en I2C **SDA=15 / SCL=7** :
+  DC3 3,0 V = alimentation du modem, BLDO1 3,3 V = convertisseur de niveaux ESP32 ↔ modem
+  (source : exemples officiels LilyGO, `utilities.h`).
 
 ### Python (backend)
 - Bibliothèque standard + `paho-mqtt==1.6.1` uniquement (image Alpine ARM, rien à compiler).

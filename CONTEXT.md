@@ -18,7 +18,8 @@ même sans WiFi au mouillage (cible finale : liaison cellulaire LTE-M).
         │  BLE : requête statut 0x13 → trame 104 octets (en plusieurs notifications)
         ▼
 [Passerelle ESP32]  Embedded/esp32_gateway  (cycle → deep sleep 60 s)
-        │  HTTPS POST /report  (en-tête X-API-Key, certificat serveur vérifié)
+        │  HTTPS POST /report : LTE-M (modem SIM7080G, SIM Things Mobile) ; WiFi sur le banc
+        │  (en-tête X-API-Key, certificat serveur vérifié par l'ESP32)
         ▼
 [Cloudflare] → [Add-on HA "Battery Backend"]  Python, port 8000, SQLite /data/batteries.db
         │  MQTT Discovery (préfixe "homeassistant")
@@ -52,13 +53,17 @@ HA-Batterie-backend-addons/
     ├── esp32_gateway/               # PROJET PLATFORMIO (passerelle)
     │   ├── platformio.ini           # envs : lilygo-debug (défaut), lilygo-release, esp32dev-debug, esp32dev-release
     │   ├── include/
-    │   │   ├── secrets.example.h    # modèle versionné (WiFi, clé API)
+    │   │   ├── secrets.example.h    # modèle versionné (clé API, code PIN SIM, WiFi du banc)
     │   │   └── secrets.h            # vrais secrets, IGNORÉ par git (à créer)
     │   └── src/
     │       ├── main.cpp             # cycle complet, watchdog, deep sleep
     │       ├── ble_battery.h/.cpp   # dialogue BLE avec le BMS (lecture, commande, validation)
-    │       ├── network.h/.cpp       # internet + HTTPS (WiFi ; GSM à venir, même interface)
-    │       ├── config.h/.cpp        # réglages, URL, batteries
+    │       ├── network.h            # interface de la liaison internet (transport TCP)
+    │       ├── network_gsm.cpp      # LTE-M : PMU, modem SIM7080G (TinyGSM), APN, extinction
+    │       ├── network_wifi.cpp     # WiFi (banc de test, envs esp32dev-*)
+    │       ├── report.h/.cpp        # rapport HTTPS commun (SSLClient + ArduinoHttpClient)
+    │       ├── buffered_client.h    # requête HTTP envoyée en un seul bloc
+    │       ├── config.h/.cpp        # réglages, serveur, APN, batteries
     │       ├── root_ca.h            # racines TLS acceptées (GTS R1/R4, ISRG X1/X2)
     │       ├── debug.h              # macros DEBUG_* : traces série en mode debug, rien en release
     │       └── types.h              # BatteryConfig, BatteryReading, Cmd
@@ -109,13 +114,35 @@ HA-Batterie-backend-addons/
   **pas encore validés sur la vraie batterie** → `DEBUG_DUMP_FRAME = true` dans `config.h` (build debug) pour vérifier.
 
 ### 3.3 Passerelle (`Embedded/esp32_gateway/src/`)
-- Version de cette branche : **WiFi** (`WiFiClientSecure` + `setCACert(ROOT_CA_BUNDLE)`), pas encore GSM.
+- Transport choisi à la compilation : **LTE-M** sur la LILYGO (`-DNETWORK_GSM`,
+  `network_gsm.cpp`), **WiFi** sur l'ESP32 du banc (`-DNETWORK_WIFI`, `network_wifi.cpp`).
+  Interface commune `network.h` : `networkConnect()`, `networkIsConnected()`, `networkStop()`,
+  `networkTcpClient()`.
+- HTTPS commun (`report.cpp`) : `networkTcpClient()` → `SSLClient` (TLS mbedtls sur l'ESP32,
+  `ROOT_CA_BUNDLE`, SNI et nom d'hôte vérifiés) → `BufferedClient<512>` (requête en un seul
+  envoi) → `ArduinoHttpClient`. User-Agent `ESP32HTTPClient` (celui déjà accepté par Cloudflare).
 - Cycle : lecture BLE de chaque batterie (`readBattery`) → **si au moins une lecture valide**,
-  connexion WiFi → jusqu'à `MAX_ROUNDS = 3` tours "rapport → commande → `applyCommand`
-  (écrit, relit) → rapport de confirmation" → `networkStop()` → deep sleep `CYCLE_INTERVAL_MS` (60 s).
-- Watchdog : cycle borné à `MAX_CYCLE_DURATION_S` (180 s) ; après un redémarrage anormal
-  (watchdog, panic, brownout), le cycle est sauté et la carte se rendort.
-- Délais : WiFi 15 s, TCP / TLS / réponse HTTP 10 s ; réponse serveur lue seulement si ≤ 512 octets.
+  `networkConnect()` → jusqu'à `MAX_ROUNDS = 3` tours "rapport → commande → `applyCommand`
+  (écrit, relit) → rapport de confirmation" → `networkStop()` → deep sleep `CYCLE_INTERVAL_MS` (60 s, test).
+- LTE-M (`network_gsm.cpp`), broches et séquences des exemples officiels LilyGO :
+  - PMU AXP2101 en I2C SDA 15 / SCL 7 : DC3 = 3,0 V (alimentation du SIM7080G), BLDO1 = 3,3 V
+    (convertisseur de niveaux ESP32 ↔ modem), mesure TS désactivée. UART modem RX 4 / TX 5,
+    PWRKEY GPIO 41 (HIGH = appui), DTR GPIO 42 (LOW = éveillé).
+  - Démarrage : DC3 + BLDO1, test AT (modem déjà allumé ?), sinon impulsion PWRKEY (2 essais × 10 s).
+  - SIM (PIN optionnel `SECRET_SIM_PIN`, jamais retenté après un refus) → `CFUN=0` → `CNMP=38`
+    (LTE seul) → `CMNB=GSM_RADIO_MODE` (1 = LTE-M) → `CGDCONT` / `CNCFG` APN `TM` → `CFUN=1` →
+    inscription (itinérance acceptée, ≤ 90 s) → `CNACT=0,1` (≤ 30 s). Le `gprsConnect()` de
+    TinyGSM n'est volontairement pas utilisé (il détache puis rattache le réseau, attentes très
+    longues, `DEACTIVE` compté comme un succès).
+  - Arrêt : `AT+CPOWD=1` puis coupure de DC3 et BLDO1 ; fait aussi au démarrage après un
+    redémarrage anormal (le modem a pu rester allumé).
+  - Debug : opérateur, signal, IP, `+CPSI` (technologie réellement utilisée) ;
+    `-DGSM_DUMP_AT_COMMANDS` affiche tout le dialogue AT.
+- Délais : HTTP (TCP + TLS + réponse) 20 s en LTE-M, 10 s en WiFi ; connexion WiFi 15 s ;
+  réponse serveur lue seulement si ≤ 512 octets.
+- Watchdog : cycle borné à `MAX_CYCLE_DURATION_S` (420 s en LTE-M, 180 s en WiFi) ; après un
+  redémarrage anormal (watchdog, panic, brownout), le modem est éteint, le cycle sauté et la
+  carte se rendort.
 - Réassemblage des notifications : buffer 256 o protégé par `portMUX`, trame complète
   après `FRAME_QUIET_MS` (150 ms) de silence et ≥ 104 octets.
 - Validation : checksum bloquant (`STRICT_FRAME_CHECKSUM`), valeurs hors bornes rejetées
@@ -141,15 +168,18 @@ HA-Batterie-backend-addons/
    Let's Encrypt → les racines des deux sont embarquées (pas d'épinglage d'une seule racine).
 6. **Validation des deux côtés** : la passerelle filtre les trames corrompues, l'add-on ne fait
    confiance à aucune donnée reçue.
+7. **TLS sur l'ESP32, pas sur le modem** : mêmes racines et même vérification qu'en WiFi, pas
+   de certificat à charger dans le système de fichiers du modem, couche HTTPS identique pour
+   les deux transports (le banc WiFi teste le même code que le bateau).
 
 ---
 
 ## 5. Historique à connaître
 
-- `main` contient 3 commits **après** `Reprise_par_Claude` : `d66176d` (durcissement sécurité
-  du backend "par l'IA"), `6fc85ff` (passage passerelle en GSM/TinyGSM, macros `DEBUG_*`),
-  `c5719da` (tmp). Ils ne sont **pas** dans cette branche. Le durcissement du backend et les
-  macros de debug ont été refaits ici ; le GSM reste à reprendre de `6fc85ff`.
+- `main`, `Reprise_par_Claude` et cette branche partagent désormais le même historique
+  (réécrit par l'utilisateur). Les anciens commits `d66176d`, `6fc85ff` (premier essai GSM) et
+  `c5719da` ne sont plus dans aucune branche ; le durcissement du backend, les macros de debug
+  et le GSM ont été refaits ici.
 - Un ancien CONTEXT.md (non versionné) annonçait des fonctions qui n'existaient pas ; ce
   fichier-ci décrit le code réel.
 
@@ -172,17 +202,30 @@ Restants :
 - Changer le `name` d'une batterie crée de nouvelles entités HA (anciennes à supprimer à la main).
 - `test_http_report_mock.ino` utilise encore `setInsecure()` (sketch de test seulement).
 
+LTE-M (code compilé, **pas encore testé sur la carte**) :
+- **Couverture Things Mobile à vérifier** : leur FAQ indique que LTE-M et NB-IoT ne sont pas
+  disponibles dans la plupart des pays couverts, et le SIM7080G ne fait que ces deux
+  technologies. Vérifier sur le portail IoT (profil d'itinérance TM-1) avant installation.
+- Coût data : négociation TLS complète à chaque rapport (pas de reprise de session) → quelques
+  Ko par rapport ; à 60 s de cycle, plusieurs Mo par jour facturés.
+- Inscription LTE-M refaite à chaque réveil (modem hors tension pendant la veille) : jusqu'à
+  ~2 min de radio active si la couverture est mauvaise ; pas encore de PSM ni d'espacement
+  des tentatives après des échecs répétés.
+- `SSLClient` (govorox) est sous licence GPL-3.0 : à garder en tête si le firmware est distribué.
+
 Sécurité dépôt :
-- Le commit `6fc85ff` (sur `main`) contient un vrai mot de passe WiFi de box dans
-  `test_http_report_mock.ino` → mot de passe à changer, il reste dans l'historique git.
+- L'ancien commit `6fc85ff` contenait un vrai mot de passe WiFi de box. Il n'est plus dans
+  aucune branche mais peut rester accessible sur GitHub par son hash : changer le mot de passe
+  reste la seule protection fiable.
 
 ---
 
 ## 7. Feuille de route envisagée
 
 1. Migration embarqué vers PlatformIO — **passerelle faite** (simulateur et mock encore en .ino).
-2. Repasser la passerelle en LTE-M (LILYGO T-SIM7080G-S3, TinyGSM) en reprenant `6fc85ff`,
-   derrière l'interface `network.h` (`networkStop()` = extinction du modem). Attention : le
-   TLS sera alors fait par le modem, la vérification du certificat est à refaire de ce côté.
-3. Valider les offsets BMS sur la vraie batterie.
-4. Plus tard : position GNSS, mesures PMU AXP2101 (solaire, batterie de secours).
+2. LTE-M — **code fait**, à valider sur la carte : couverture Things Mobile, temps
+   d'inscription, consommation data réelle (portail Things Mobile).
+3. Réduire énergie et data en LTE-M : intervalle de production (15 min ou plus), PSM du modem,
+   reprise de session TLS, espacement des essais après des échecs réseau.
+4. Valider les offsets BMS sur la vraie batterie.
+5. Plus tard : position GNSS, mesures PMU AXP2101 (solaire, batterie de secours).
