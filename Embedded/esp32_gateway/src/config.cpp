@@ -13,7 +13,8 @@
 // ---------------- A CONFIGURER ----------------
 const char* WIFI_SSID     = SECRET_WIFI_SSID;
 const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
-const char* SERVER_URL    = "https://batteries.thibaultbansha.ovh/report";
+const char* SERVER_HOST   = "batteries.thibaultbansha.ovh";
+const char* SERVER_PATH   = "/report";
 // Racines de confiance du serveur (src/root_ca.h). nullptr = aucune verification :
 // n'importe qui sur le chemin reseau pourrait lire la cle API et forger des commandes.
 const char* SERVER_ROOT_CA = ROOT_CA_BUNDLE;

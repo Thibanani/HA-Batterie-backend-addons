@@ -1,10 +1,16 @@
 /*
- * Module reseau : acces internet et envoi des rapports au serveur.
- * Implemente en WiFi dans network.cpp ; le GSM (LTE-M) remplacera cette
- * implementation sans changer cette interface.
+ * Liaison internet de la passerelle (transport TCP).
+ *
+ * Un seul transport est compile, choisi par platformio.ini :
+ *   -DNETWORK_WIFI : WiFi (network_wifi.cpp)
+ * Le HTTPS est ajoute par-dessus, a l'identique pour tous les transports (report.cpp).
  */
 #pragma once
-#include "types.h"
+#include <Client.h>
+
+#if !defined(NETWORK_WIFI)
+  #error "Choisir le transport dans platformio.ini : -DNETWORK_WIFI"
+#endif
 
 // true si la liaison internet est etablie.
 bool networkIsConnected();
@@ -12,10 +18,8 @@ bool networkIsConnected();
 // Etablit la liaison internet si elle ne l'est pas deja. Renvoie true en cas de succes.
 bool networkConnect();
 
-// Coupe la liaison et la radio avant la mise en veille (en GSM : extinction du modem,
-// qui reste alimente pendant le deep sleep de l'ESP32).
+// Coupe la liaison et la radio avant la mise en veille.
 void networkStop();
 
-// Envoie un rapport au serveur ; renvoie true si le serveur a repondu 200.
-// cmdOut recoit la commande eventuellement renvoyee par le serveur.
-bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut);
+// Client TCP brut de la liaison : le TLS est ajoute par report.cpp.
+Client& networkTcpClient();

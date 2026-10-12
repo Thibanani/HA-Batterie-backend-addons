@@ -8,7 +8,9 @@
 // ---------------- A personnaliser (definis dans config.cpp) ----------------
 extern const char* WIFI_SSID;          // secrets : include/secrets.h
 extern const char* WIFI_PASSWORD;
-extern const char* SERVER_URL;
+extern const char* SERVER_HOST;        // serveur HTTPS (add-on Home Assistant)
+extern const char* SERVER_PATH;
+static const uint16_t SERVER_PORT = 443;
 extern const char* SERVER_ROOT_CA;     // certificats racines acceptes (nullptr = pas de verification)
 extern const char* API_KEY;            // identique a l'option "api_key" de l'add-on
 

@@ -15,7 +15,10 @@
  *   types.h             structures communes
  *   debug.h             macros de traces serie (mode debug / release)
  *   ble_battery.h/.cpp  dialogue Bluetooth avec le BMS
- *   network.h/.cpp      connexion internet (WiFi, GSM plus tard) et HTTP
+ *   network.h           liaison internet (transport TCP), une implementation par
+ *                       transport : network_wifi.cpp
+ *   report.h/.cpp       rapport HTTPS au serveur (commun a tous les transports)
+ *   buffered_client.h   regroupe la requete HTTP en un seul envoi
  *   main.cpp            cycle complet et mise en veille
  *
  * Modes de compilation (voir platformio.ini) :
@@ -30,7 +33,12 @@
 #include "ble_battery.h"
 #include "debug.h"
 #include "network.h"
+#include "report.h"
 #include "config.h"
+
+// Pile de la tache loop() : la negociation TLS (mbedtls) plus HTTP, et en GSM le
+// pilote du modem, depassent confortablement les 8 Ko par defaut.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 // Etat d'une batterie pendant un cycle.
 struct BatterySlot {
