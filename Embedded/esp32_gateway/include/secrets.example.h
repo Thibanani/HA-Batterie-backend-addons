@@ -8,8 +8,13 @@
  */
 #pragma once
 
+// WiFi : utilise seulement par les environnements esp32dev-* (banc de test).
 #define SECRET_WIFI_SSID     "TON_WIFI"
 #define SECRET_WIFI_PASSWORD "TON_MOT_DE_PASSE"
+
+// Code PIN de la carte SIM ("" si desactive, cas par defaut des SIM Things Mobile).
+// Un code refuse n'est pas retente avant un redemarrage complet (protection PUK).
+#define SECRET_SIM_PIN       ""
 
 // Identique a l'option "api_key" de l'add-on Home Assistant.
 // Generer une valeur longue et aleatoire, par exemple :

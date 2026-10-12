@@ -9,10 +9,15 @@
   #warning "include/secrets.h absent : valeurs factices de secrets.example.h utilisees (copier le modele et le remplir)"
   #include "secrets.example.h"
 #endif
+#ifndef SECRET_SIM_PIN               // secrets.h anterieur a la version LTE-M
+  #define SECRET_SIM_PIN ""
+#endif
 
 // ---------------- A CONFIGURER ----------------
 const char* WIFI_SSID     = SECRET_WIFI_SSID;
 const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+const char* GSM_APN       = "TM";                 // Things Mobile (sans identifiant ni mot de passe)
+const char* GSM_SIM_PIN   = SECRET_SIM_PIN;
 const char* SERVER_HOST   = "batteries.thibaultbansha.ovh";
 const char* SERVER_PATH   = "/report";
 // Racines de confiance du serveur (src/root_ca.h). nullptr = aucune verification :

@@ -16,7 +16,7 @@
  *   debug.h             macros de traces serie (mode debug / release)
  *   ble_battery.h/.cpp  dialogue Bluetooth avec le BMS
  *   network.h           liaison internet (transport TCP), une implementation par
- *                       transport : network_wifi.cpp
+ *                       transport : network_gsm.cpp (LTE-M), network_wifi.cpp (banc)
  *   report.h/.cpp       rapport HTTPS au serveur (commun a tous les transports)
  *   buffered_client.h   regroupe la requete HTTP en un seul envoi
  *   main.cpp            cycle complet et mise en veille
@@ -134,6 +134,7 @@ void setup() {
   // suivant au lieu de recommencer aussitot (pas de boucle de redemarrages).
   if (lastResetWasAbnormal()) {
     DEBUG_PRINTF("[CYCLE] Redemarrage anormal (raison %d) : cycle saute.\n", (int)esp_reset_reason());
+    networkStop();   // le modem a pu rester allume par le cycle interrompu
     goToSleep();
   }
 
