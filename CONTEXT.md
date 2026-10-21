@@ -17,7 +17,7 @@ même sans WiFi au mouillage (cible finale : liaison cellulaire LTE-M).
 [Batterie(s) PowerQueen]  BMS BLE, service 0xFFE0
         │  BLE : requête statut 0x13 → trame 104 octets (en plusieurs notifications)
         ▼
-[Passerelle ESP32]  Embedded/esp32_gateway  (cycle → deep sleep 60 s)
+[Passerelle ESP32]  Embedded/esp32_gateway  (cycle → deep sleep 1 h)
         │  HTTPS POST /report : LTE-M (modem SIM7080G, SIM Things Mobile) ; WiFi sur le banc
         │  (en-tête X-API-Key, certificat serveur vérifié par l'ESP32)
         ▼
@@ -124,16 +124,20 @@ HA-Batterie-backend-addons/
 - Cycle : lecture BLE de chaque batterie (`readBattery`) → **si une valeur a changé ou si le
   rapport de vie est dû**, `networkConnect()` → jusqu'à `MAX_ROUNDS = 3` tours "rapport →
   commande → `applyCommand` (écrit, relit) → rapport de confirmation" → `networkStop()` →
-  deep sleep `CYCLE_INTERVAL_MS` (60 s, test).
+  deep sleep `CYCLE_INTERVAL_MS` (1 h).
+- ⚠️ Avec un rapport par heure, l'option `sensor_expire_after` de l'add-on doit dépasser
+  3600 s (ex. 10800 = 3 h, tolère deux rapports manqués) ; à 900 s les capteurs passeraient
+  « indisponible » 15 min après chaque rapport.
 - Économie de data (forfait LTE-M facturé au Mo) :
   - rapport seulement si changement (tension ≥ 0,05 V, courant ≥ 1 A, SOC ≥ 1 point, SOH ou
-    état de décharge) ou rapport de vie toutes les `REPORT_HEARTBEAT_S` (600 s) ; dernières
+    état de décharge) ou rapport de vie toutes les `REPORT_HEARTBEAT_S` ; avec le réveil
+    horaire actuel (`REPORT_HEARTBEAT_S` = 3600 s), chaque réveil envoie un rapport ; dernières
     valeurs envoyées et compteur en mémoire RTC (`g_sent`, `g_cyclesSinceReport`) ;
   - une seule connexion TLS par cycle (keep-alive, `g_tls` / `g_http` dans `report.cpp`),
     jamais fermée explicitement (l'extinction du modem suffit) ; un nouvel essai si le
     serveur l'a fermée ;
   - tension / courant envoyés avec 2 décimales.
-  Conséquence : une commande HA attend au plus `REPORT_HEARTBEAT_S` avant d'être appliquée.
+  Conséquence : une commande HA attend le prochain rapport, soit jusqu'à 1 h actuellement.
 - LTE-M (`network_gsm.cpp`), broches et séquences des exemples officiels LilyGO :
   - PMU AXP2101 en I2C SDA 15 / SCL 7 : DC3 = 3,0 V (alimentation du SIM7080G), BLDO1 = 3,3 V
     (convertisseur de niveaux ESP32 ↔ modem), mesure TS désactivée. UART modem RX 4 / TX 5,
@@ -218,8 +222,8 @@ LTE-M (code compilé, **pas encore testé sur la carte**) :
   technologies. Vérifier sur le portail IoT (profil d'itinérance TM-1) avant installation.
 - Coût data : chaque cycle qui utilise le réseau paie une négociation TLS complète (~4 Ko,
   surtout la chaîne de certificats Cloudflare) ; SSLClient n'expose pas la reprise de session
-  TLS (il faudrait forker la bibliothèque). Valeurs stables : un rapport de vie toutes les
-  10 min, soit de l'ordre de 0,7 Mo/jour (estimation, à vérifier sur le portail Things Mobile).
+  TLS (il faudrait forker la bibliothèque). Réveil horaire : ~24 rapports par jour, soit de
+  l'ordre de 0,1 à 0,2 Mo/jour (estimation, à vérifier sur le portail Things Mobile).
 - Les en-têtes de réponse ajoutés par Cloudflare (NEL, Report-To, alt-svc...) pèsent plusieurs
   centaines d'octets par réponse ; désactivables côté Cloudflare, pas côté code.
 - Inscription LTE-M refaite à chaque réveil (modem hors tension pendant la veille) : jusqu'à
