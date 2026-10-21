@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1
+
+- `sensor_expire_after` passe à 10800 s (3 h) par défaut : la passerelle ne remonte plus
+  qu'en cas de changement ou une fois par heure (économie de data LTE-M).
+- Avertissement au démarrage si `sensor_expire_after` vaut 3600 s ou moins.
+
+### À faire après la mise à jour
+- Une valeur déjà enregistrée (900 s) n'est **pas** remplacée : la passer à **10800** dans la
+  configuration de l'add-on, sinon les capteurs passent « indisponible » entre deux rapports.
+
 ## 1.1.0
 
 ### Sécurité

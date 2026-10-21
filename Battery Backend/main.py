@@ -48,8 +48,10 @@ DISCOVERY_PREFIX = "homeassistant"
 
 
 # Sans rapport pendant ce delai (s), les capteurs passent "indisponible" dans HA
-# (passerelle muette). 0 = jamais. A regler a ~3x l'intervalle de la passerelle.
-SENSOR_EXPIRE_AFTER = max(0, _int_env("SENSOR_EXPIRE_AFTER", 900))
+# (passerelle muette). 0 = jamais. La passerelle envoie au moins un rapport par
+# heure (REPORT_HEARTBEAT_S) : 3 h par defaut tolerent deux rapports manques.
+SENSOR_EXPIRE_AFTER = max(0, _int_env("SENSOR_EXPIRE_AFTER", 10800))
+GATEWAY_MAX_REPORT_GAP_S = 3600   # ecart maximal entre deux rapports de la passerelle
 # Etat de l'add-on : "offline" est publie par le broker (LWT) si l'add-on disparait.
 AVAILABILITY_TOPIC = "battery_backend/status"
 
@@ -515,6 +517,17 @@ def check_api_key():
         )
 
 
+def check_expire_after():
+    # Une valeur enregistree avant la 1.1.1 (900 s) n'est pas remplacee par le
+    # nouveau defaut : les capteurs clignoteraient "indisponible" entre deux rapports.
+    if 0 < SENSOR_EXPIRE_AFTER <= GATEWAY_MAX_REPORT_GAP_S:
+        log(
+            f"ATTENTION : sensor_expire_after = {SENSOR_EXPIRE_AFTER} s, alors que la passerelle "
+            f"peut rester {GATEWAY_MAX_REPORT_GAP_S} s sans rapport : les capteurs passeront "
+            "'indisponible' entre deux rapports. Regle-le a 10800 dans la configuration de l'add-on."
+        )
+
+
 def start_mqtt():
     if MQTT_USERNAME:
         mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
@@ -544,6 +557,7 @@ def stop_mqtt():
 
 def main():
     check_api_key()
+    check_expire_after()
     log("Batteries : " + (", ".join(f"{slug} ({bid})" for bid, slug in BATTERIES.items()) or "aucune"))
     init_db()
     start_mqtt()

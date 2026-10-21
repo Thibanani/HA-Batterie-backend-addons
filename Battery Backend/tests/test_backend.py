@@ -405,6 +405,20 @@ class HomeAssistantEntityTests(BackendTestCase):
         finally:
             del os.environ["TEST_ENTIER"]
 
+    def test_default_expiry_covers_hourly_reports(self):
+        self.assertGreater(main.SENSOR_EXPIRE_AFTER, main.GATEWAY_MAX_REPORT_GAP_S)
+
+    def test_short_expiry_is_reported_at_startup(self):
+        for value, warned in [(900, True), (3600, True), (10800, False), (0, False)]:
+            with self.subTest(value=value):
+                saved, main.SENSOR_EXPIRE_AFTER = main.SENSOR_EXPIRE_AFTER, value
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        main.check_expire_after()
+                finally:
+                    main.SENSOR_EXPIRE_AFTER = saved
+                self.assertEqual("sensor_expire_after" in out.getvalue(), warned)
+
 
 class BatteryOptionsTests(unittest.TestCase):
     def load(self, content):
