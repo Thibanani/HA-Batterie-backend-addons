@@ -21,20 +21,22 @@ extern const size_t        BATTERY_COUNT;
 static const size_t        MAX_BATTERIES = 4;   // au-dela, les batteries suivantes sont ignorees
 
 // ---------------- Reglages ----------------
-// Duree entre deux cycles (valeur de test). En LTE-M, chaque cycle avec rapport
-// consomme quelques Ko de data facturee (surtout la negociation TLS) et relance
-// l'inscription du modem : prevoir 15 min ou plus en production.
-static const uint32_t CYCLE_INTERVAL_MS      = 60000;
+// Duree entre deux reveils : 15 min. En LTE-M, chaque cycle avec rapport consomme
+// quelques Ko de data facturee (surtout la negociation TLS) et relance
+// l'inscription du modem.
+static const uint32_t CYCLE_INTERVAL_MS      = 900000UL;
 
 // ---------------- Economie de data ----------------
 // La batterie est lue a chaque cycle, mais le reseau n'est utilise que si une
 // valeur a change d'au moins un seuil ci-dessous (etat de decharge ou SOH : tout
 // changement), ou pour un rapport de vie toutes les REPORT_HEARTBEAT_S secondes.
-// REPORT_HEARTBEAT_S doit rester inferieur a l'option "sensor_expire_after" de
-// l'add-on (900 s par defaut), sinon les capteurs passent "indisponible" entre
-// deux rapports. Les commandes de Home Assistant sont recuperees aux rapports :
-// leur delai maximal est donc aussi REPORT_HEARTBEAT_S. 0 = rapport a chaque cycle.
-static const uint32_t REPORT_HEARTBEAT_S     = 600;
+// L'ecart maximal entre deux rapports (REPORT_HEARTBEAT_S, ou CYCLE_INTERVAL_MS
+// s'il est plus grand) doit rester bien inferieur a l'option "sensor_expire_after"
+// de l'add-on (10800 s par defaut), sinon les capteurs passent "indisponible"
+// entre deux rapports. Les commandes de Home Assistant sont recuperees aux
+// rapports : avec des valeurs stables, elles attendent jusqu'a REPORT_HEARTBEAT_S.
+// 0 = rapport a chaque cycle.
+static const uint32_t REPORT_HEARTBEAT_S     = 3600;
 static const float    REPORT_DELTA_VOLTAGE_V = 0.05f;
 static const float    REPORT_DELTA_CURRENT_A = 1.0f;
 static const int      REPORT_DELTA_SOC       = 1;      // en points de %
