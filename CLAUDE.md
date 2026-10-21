@@ -70,6 +70,9 @@ Encore des sketches Arduino IDE (`.ino`) ; ils incluent `"../bms_protocol.h"`.
   ajouter sa racine dans `src/root_ca.h` (vérifier avec `openssl s_client -showcerts`).
 - Les bornes de validation (tension, courant, SOC/SOH) sont les mêmes dans `config.h` et dans
   `LIMITS` de `main.py` : les modifier ensemble.
+- Data LTE-M facturée : ne rien envoyer qui n'apporte rien. `REPORT_HEARTBEAT_S` (config.h)
+  doit rester **inférieur** à l'option `sensor_expire_after` de l'add-on (900 s par défaut),
+  sinon les capteurs HA passent « indisponible » entre deux rapports.
 - Liaison : `network.h` est l'interface ; `network_gsm.cpp` (LTE-M, envs lilygo-*) ou
   `network_wifi.cpp` (banc, envs esp32dev-*), un seul compilé (`-DNETWORK_GSM` / `-DNETWORK_WIFI`).
   Le HTTPS est commun (`report.cpp`) : le TLS reste fait par l'ESP32 (SSLClient + `root_ca.h`),

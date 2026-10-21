@@ -121,9 +121,19 @@ HA-Batterie-backend-addons/
 - HTTPS commun (`report.cpp`) : `networkTcpClient()` → `SSLClient` (TLS mbedtls sur l'ESP32,
   `ROOT_CA_BUNDLE`, SNI et nom d'hôte vérifiés) → `BufferedClient<512>` (requête en un seul
   envoi) → `ArduinoHttpClient`. User-Agent `ESP32HTTPClient` (celui déjà accepté par Cloudflare).
-- Cycle : lecture BLE de chaque batterie (`readBattery`) → **si au moins une lecture valide**,
-  `networkConnect()` → jusqu'à `MAX_ROUNDS = 3` tours "rapport → commande → `applyCommand`
-  (écrit, relit) → rapport de confirmation" → `networkStop()` → deep sleep `CYCLE_INTERVAL_MS` (60 s, test).
+- Cycle : lecture BLE de chaque batterie (`readBattery`) → **si une valeur a changé ou si le
+  rapport de vie est dû**, `networkConnect()` → jusqu'à `MAX_ROUNDS = 3` tours "rapport →
+  commande → `applyCommand` (écrit, relit) → rapport de confirmation" → `networkStop()` →
+  deep sleep `CYCLE_INTERVAL_MS` (60 s, test).
+- Économie de data (forfait LTE-M facturé au Mo) :
+  - rapport seulement si changement (tension ≥ 0,05 V, courant ≥ 1 A, SOC ≥ 1 point, SOH ou
+    état de décharge) ou rapport de vie toutes les `REPORT_HEARTBEAT_S` (600 s) ; dernières
+    valeurs envoyées et compteur en mémoire RTC (`g_sent`, `g_cyclesSinceReport`) ;
+  - une seule connexion TLS par cycle (keep-alive, `g_tls` / `g_http` dans `report.cpp`),
+    jamais fermée explicitement (l'extinction du modem suffit) ; un nouvel essai si le
+    serveur l'a fermée ;
+  - tension / courant envoyés avec 2 décimales.
+  Conséquence : une commande HA attend au plus `REPORT_HEARTBEAT_S` avant d'être appliquée.
 - LTE-M (`network_gsm.cpp`), broches et séquences des exemples officiels LilyGO :
   - PMU AXP2101 en I2C SDA 15 / SCL 7 : DC3 = 3,0 V (alimentation du SIM7080G), BLDO1 = 3,3 V
     (convertisseur de niveaux ESP32 ↔ modem), mesure TS désactivée. UART modem RX 4 / TX 5,
@@ -206,8 +216,12 @@ LTE-M (code compilé, **pas encore testé sur la carte**) :
 - **Couverture Things Mobile à vérifier** : leur FAQ indique que LTE-M et NB-IoT ne sont pas
   disponibles dans la plupart des pays couverts, et le SIM7080G ne fait que ces deux
   technologies. Vérifier sur le portail IoT (profil d'itinérance TM-1) avant installation.
-- Coût data : négociation TLS complète à chaque rapport (pas de reprise de session) → quelques
-  Ko par rapport ; à 60 s de cycle, plusieurs Mo par jour facturés.
+- Coût data : chaque cycle qui utilise le réseau paie une négociation TLS complète (~4 Ko,
+  surtout la chaîne de certificats Cloudflare) ; SSLClient n'expose pas la reprise de session
+  TLS (il faudrait forker la bibliothèque). Valeurs stables : un rapport de vie toutes les
+  10 min, soit de l'ordre de 0,7 Mo/jour (estimation, à vérifier sur le portail Things Mobile).
+- Les en-têtes de réponse ajoutés par Cloudflare (NEL, Report-To, alt-svc...) pèsent plusieurs
+  centaines d'octets par réponse ; désactivables côté Cloudflare, pas côté code.
 - Inscription LTE-M refaite à chaque réveil (modem hors tension pendant la veille) : jusqu'à
   ~2 min de radio active si la couverture est mauvaise ; pas encore de PSM ni d'espacement
   des tentatives après des échecs répétés.
