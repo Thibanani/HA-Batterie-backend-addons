@@ -48,21 +48,69 @@ struct BatterySlot {
   BatterySlot() : needsReport(false), pending(Cmd::None) {}
 };
 
+// ---------------- Economie de data : rapport seulement si utile ----------------
+// Dernieres valeurs acceptees par le serveur, conservees pendant le deep sleep.
+struct SentState {
+  bool     valid;
+  float    voltage_v;
+  float    current_a;
+  uint16_t soc;
+  uint16_t soh;
+  bool     dischargeOff;
+};
+static RTC_DATA_ATTR SentState g_sent[MAX_BATTERIES];
+static RTC_DATA_ATTR uint32_t  g_cyclesSinceReport = 0;
+
+static size_t batteryCount() {
+  return BATTERY_COUNT < MAX_BATTERIES ? BATTERY_COUNT : MAX_BATTERIES;
+}
+
+static bool changedSinceLastReport(size_t i, const BatteryReading &r) {
+  const SentState &s = g_sent[i];
+  return !s.valid
+      || r.dischargeOff != s.dischargeOff
+      || r.soh != s.soh
+      || abs((int)r.soc - (int)s.soc) >= REPORT_DELTA_SOC
+      || fabsf(r.voltage_v - s.voltage_v) >= REPORT_DELTA_VOLTAGE_V
+      || fabsf(r.current_a - s.current_a) >= REPORT_DELTA_CURRENT_A;
+}
+
+static void rememberReport(size_t i, const BatteryReading &r) {
+  g_sent[i] = { true, r.voltage_v, r.current_a, r.soc, r.soh, r.dischargeOff };
+}
+
+// Nombre de cycles entre deux rapports de vie (au moins 1).
+static uint32_t heartbeatCycles() {
+  uint32_t n = (uint32_t)((uint64_t)REPORT_HEARTBEAT_S * 1000 / CYCLE_INTERVAL_MS);
+  return n > 0 ? n : 1;
+}
+
 // ---------------- Cycle complet ----------------
 void runCycle() {
-  BatterySlot slots[BATTERY_COUNT];
+  const size_t count = batteryCount();
+  BatterySlot slots[MAX_BATTERIES];
+  g_cyclesSinceReport++;
 
   // 1. Lecture BLE de chaque batterie
-  for (size_t i = 0; i < BATTERY_COUNT; i++) {
+  bool anyValid = false, anyChange = false;
+  for (size_t i = 0; i < count; i++) {
     slots[i].reading = readBattery(BATTERIES[i]);
     slots[i].needsReport = slots[i].reading.valid;
+    anyValid = anyValid || slots[i].reading.valid;
+    anyChange = anyChange || (slots[i].reading.valid && changedSinceLastReport(i, slots[i].reading));
   }
 
-  // Rien a envoyer : la radio reseau n'est pas allumee (economie d'energie).
-  bool anyValid = false;
-  for (size_t i = 0; i < BATTERY_COUNT; i++) anyValid = anyValid || slots[i].needsReport;
+  // Rien a envoyer : la radio reseau n'est pas allumee (energie et data).
   if (!anyValid) {
     DEBUG_PRINTLN("[CYCLE] Aucune batterie lue : reseau non active.");
+    return;
+  }
+  // Valeurs stables : rapport seulement quand le rapport de vie est du. Les
+  // commandes de Home Assistant attendent donc au plus REPORT_HEARTBEAT_S.
+  bool heartbeatDue = g_cyclesSinceReport >= heartbeatCycles();
+  if (!anyChange && !heartbeatDue) {
+    DEBUG_PRINTF("[CYCLE] Valeurs stables : pas d'envoi (rapport de vie dans %u cycle(s)).\n",
+                 (unsigned)(heartbeatCycles() - g_cyclesSinceReport));
     return;
   }
   if (!networkConnect()) {
@@ -70,14 +118,18 @@ void runCycle() {
     return;
   }
 
-  // 2 et 3. Rapport, puis commande eventuelle, puis rapport de confirmation
+  // 2 et 3. Rapport, puis commande eventuelle, puis rapport de confirmation.
+  // Toutes les batteries lues sont envoyees : la connexion TLS est deja payee.
+  bool anySent = false;
   for (int round = 0; round < MAX_ROUNDS; round++) {
     bool anyCommand = false;
 
-    for (size_t i = 0; i < BATTERY_COUNT; i++) {
+    for (size_t i = 0; i < count; i++) {
       if (!slots[i].needsReport) continue;
       Cmd cmd = Cmd::None;
       if (postReport(BATTERIES[i], slots[i].reading, cmd)) {
+        rememberReport(i, slots[i].reading);
+        anySent = true;
         slots[i].needsReport = false;
         slots[i].pending = cmd;
         if (cmd != Cmd::None) anyCommand = true;
@@ -85,13 +137,14 @@ void runCycle() {
     }
     if (!anyCommand) break;
 
-    for (size_t i = 0; i < BATTERY_COUNT; i++) {
+    for (size_t i = 0; i < count; i++) {
       if (slots[i].pending == Cmd::None) continue;
       slots[i].reading = applyCommand(BATTERIES[i], slots[i].pending);
       slots[i].pending = Cmd::None;
       slots[i].needsReport = slots[i].reading.valid;   // rapport de confirmation au tour suivant
     }
   }
+  if (anySent) g_cyclesSinceReport = 0;
 }
 
 #define uS_TO_mS_FACTOR 1000ULL
