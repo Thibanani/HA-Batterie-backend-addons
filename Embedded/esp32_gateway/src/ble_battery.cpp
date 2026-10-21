@@ -166,6 +166,9 @@ bool bleOpen(const BatteryConfig &cfg, BleSession &s) {
     bleClose(s);
     return false;
   }
+  // Laisse au BMS le temps d'activer les notifications : une requete envoyee
+  // aussitot peut recevoir une reponse notifiee dans le vide.
+  delay(NOTIFY_SETTLE_MS);
 
   DEBUG_PRINTF("[BLE] Connecte (MTU %u).\n", (unsigned)s.client->getMTU());
   return true;
@@ -176,20 +179,32 @@ bool bleWrite(BleSession &s, const uint8_t* cmd) {
   return s.writeChr->writeValue(cmd, BMS_CMD_LEN, s.writeChr->canWrite());
 }
 
-bool bleQueryStatus(BleSession &s, BatteryReading &out) {
+// Envoie la requete de statut et attend une trame complete ; renvoie le nombre
+// d'octets recus.
+static size_t requestStatusFrame(BleSession &s) {
   rxReset();
   if (!bleWrite(s, BMS_CMD_STATUS)) {
     DEBUG_PRINTLN("[BLE] Ecriture de la requete de statut impossible.");
-    return false;
+    return 0;
   }
-
   uint32_t start = millis();
+  size_t len = 0;
   while (millis() - start < STATUS_TIMEOUT_MS) {
-    size_t len;
     uint32_t lastMs;
     rxSnapshot(len, lastMs);
     if (len >= BMS_STATUS_LEN && millis() - lastMs > FRAME_QUIET_MS) break;
     delay(20);
+  }
+  return len;
+}
+
+bool bleQueryStatus(BleSession &s, BatteryReading &out) {
+  // Requete ou reponse perdue (radio) : un nouvel essai sur la meme connexion.
+  for (int attempt = 1; attempt <= STATUS_ATTEMPTS; attempt++) {
+    size_t received = requestStatusFrame(s);
+    if (received >= BMS_STATUS_LEN) break;
+    DEBUG_PRINTF("[BLE] Pas de trame complete (%u octets, essai %d/%d).\n",
+                 (unsigned)received, attempt, STATUS_ATTEMPTS);
   }
 
   uint8_t frame[RX_BUF_SIZE];

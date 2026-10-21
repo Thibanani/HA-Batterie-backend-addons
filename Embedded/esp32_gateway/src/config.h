@@ -51,6 +51,8 @@ static const uint32_t MAX_CYCLE_DURATION_S   = 180;    // au-dela, le watchdog r
 #endif
 static const int      BLE_CONNECT_ATTEMPTS   = 2;
 static const uint32_t STATUS_TIMEOUT_MS      = 4000;   // attente maximale de la trame de statut
+static const int      STATUS_ATTEMPTS        = 2;      // requetes de statut par connexion BLE
+static const uint32_t NOTIFY_SETTLE_MS       = 200;    // pause entre l'abonnement FFE1 et la 1re requete
 static const uint32_t FRAME_QUIET_MS         = 150;    // silence apres le dernier morceau = trame complete
 static const uint32_t AFTER_COMMAND_DELAY_MS = 800;    // pause entre l'ecriture d'une commande et la relecture
 static const int      MAX_ROUNDS             = 3;      // rapports successifs par cycle (rapport + confirmations)
