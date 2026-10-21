@@ -63,7 +63,11 @@ bool postReport(const BatteryConfig &cfg, const BatteryReading &r, Cmd &cmdOut) 
   }
 
   SSLClient tls(&networkTcpClient());
-  tls.setTimeout(HTTP_TIMEOUT_MS);           // negociation TLS et lectures
+  // Pas de tls.setTimeout() : SSLClient attendrait que le client TCP annonce tout
+  // l'enregistrement TLS d'un coup, ce que le client du modem (TinyGSM, tampon de
+  // 1 Ko) ne fait jamais : blocage puis coupure par le serveur. Sans delai, il lit
+  // ce qui est arrive et mbedtls assemble les morceaux.
+  tls.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);   // en secondes
   if (SERVER_ROOT_CA != nullptr) {
     tls.setCACert(SERVER_ROOT_CA);           // chaine de certificats ET nom d'hote verifies
   } else {
