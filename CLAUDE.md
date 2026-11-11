@@ -6,7 +6,8 @@ réglages liés entre passerelle et add-on) et **`CONTEXT.md`** (état réel du 
 branches, problèmes connus). Toute évolution d'architecture met à jour `ARCHITECTURE.md`.
 
 L'utilisateur échange en français ; code, commentaires et messages de commit en français.
-Un commit par fonctionnalité.
+Un commit par fonctionnalité. **Branche de travail : `main`** (lue par Home Assistant) ; ne plus
+partir de `claude/analyze-existing-code-489616` ni de `Reprise_par_Claude`.
 
 ## Commandes
 

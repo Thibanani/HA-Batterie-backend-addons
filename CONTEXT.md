@@ -2,8 +2,10 @@
 
 > Mémoire de travail pour reprendre le développement rapidement : architecture,
 > état réel du code, choix de conception, problèmes connus et pistes.
-> Base de travail : branche `Reprise_par_Claude` (= commit `085f169`, deep sleep),
-> poursuivie sur `claude/analyze-existing-code-489616`.
+> **Branche de travail : `main`.** C'est la branche de référence (lue par Home Assistant
+> pour l'add-on) : partir de `main` et y ramener le travail. Les branches
+> `claude/analyze-existing-code-489616` et `Reprise_par_Claude` sont des branches de
+> travail passées, à ne plus utiliser comme base.
 > Schémas et vue d'ensemble : [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
@@ -188,10 +190,13 @@ HA-Batterie-backend-addons/
 
 ## 5. Historique à connaître
 
-- `main`, `Reprise_par_Claude` et cette branche partagent désormais le même historique
-  (réécrit par l'utilisateur). Les anciens commits `d66176d`, `6fc85ff` (premier essai GSM) et
-  `c5719da` ne sont plus dans aucune branche ; le durcissement du backend, les macros de debug
-  et le GSM ont été refaits ici.
+- Le travail a été fait sur `claude/analyze-existing-code-489616` (partie de
+  `Reprise_par_Claude`, commit `085f169`), puis entièrement fusionné dans `main`, désormais
+  seule branche de travail. `Reprise_par_Claude` est restée en arrière ;
+  `claude/reveil-horaire` garde un essai de réveil horaire non retenu.
+- L'historique a été réécrit par l'utilisateur : les anciens commits `d66176d`, `6fc85ff`
+  (premier essai GSM) et `c5719da` ne sont plus dans aucune branche ; le durcissement du
+  backend, les macros de debug et le GSM ont été refaits.
 - Un ancien CONTEXT.md (non versionné) annonçait des fonctions qui n'existaient pas ; ce
   fichier-ci décrit le code réel.
 
@@ -199,7 +204,7 @@ HA-Batterie-backend-addons/
 
 ## 6. Problèmes connus
 
-Corrigés sur cette branche : clé API en temps constant, `/status` protégé, validation stricte
+Corrigés : clé API en temps constant, `/status` protégé, validation stricte
 des rapports, serveur HTTP durci, reconnexion MQTT, disponibilité / expiration / statistiques
 des entités, batteries configurables, secrets de la passerelle hors du dépôt, HTTPS vérifié,
 réseau à la demande, délais bornés, watchdog, trames BLE validées.
