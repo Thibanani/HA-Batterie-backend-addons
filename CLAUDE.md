@@ -9,6 +9,31 @@ L'utilisateur échange en français ; code, commentaires et messages de commit e
 Un commit par fonctionnalité. **Branche de travail : `main`** (lue par Home Assistant) ; ne plus
 partir de `claude/analyze-existing-code-489616` ni de `Reprise_par_Claude`.
 
+## Équipe d'agents
+
+Définitions dans `.claude/agents/`. Un sous-agent ne peut pas en lancer d'autres :
+l'orchestration reste dans la session principale.
+
+- **Session principale** (chef de projet + architecte) : précise le besoin avec l'utilisateur,
+  met à jour le contrat entre les parties (`ARCHITECTURE.md`, réglages liés §7), découpe,
+  délègue, intègre, tient `CONTEXT.md` / `CLAUDE.md` à jour et commite. Un bug ou une petite
+  modification limités à une partie peuvent être faits directement, sans déléguer.
+- **`passerelle-esp32`** : tout `Embedded/` (passerelle, `bms_protocol.h`, simulateur, mock).
+- **`addon-ha`** : tout `Battery Backend/` (code, tests, `config.yaml`, `CHANGELOG.md`).
+- **`verificateur`** : lecture seule ; tests, builds, cohérence des interfaces, règles,
+  conformité au besoin ; verdict `OK` / `OK avec réserves` / `À CORRIGER`.
+
+Déroulé d'une fonctionnalité :
+1. Besoin et critères d'acceptation validés avec l'utilisateur.
+2. Contrat mis à jour si une interface change (champs du rapport, commandes, MQTT, réglages liés).
+3. Délégation à `passerelle-esp32` et/ou `addon-ha` (en parallèle si les deux sont touchés),
+   avec le besoin et le contrat dans la consigne.
+4. `verificateur` sur l'ensemble ; un verdict `À CORRIGER` renvoie la tâche à l'agent cité.
+5. Intégration, documentation, un commit par fonctionnalité ; tableau de suivi mis à jour à
+   chaque délégation et à chaque retour.
+
+Aucun agent ne valide le matériel réel (carte, batterie, LTE-M) : ces essais restent à l'utilisateur.
+
 ## Commandes
 
 ### Backend (`Battery Backend/`)
