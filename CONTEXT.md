@@ -4,6 +4,7 @@
 > état réel du code, choix de conception, problèmes connus et pistes.
 > Base de travail : branche `Reprise_par_Claude` (= commit `085f169`, deep sleep),
 > poursuivie sur `claude/analyze-existing-code-489616`.
+> Schémas et vue d'ensemble : [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 

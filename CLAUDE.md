@@ -1,8 +1,9 @@
 # CLAUDE.md
 
 Surveillance de batteries LiFePO4 de bateau : passerelle ESP32 (BLE → HTTPS) + add-on
-Home Assistant (HTTP → SQLite → MQTT Discovery). **Lire `CONTEXT.md`** pour l'architecture,
-l'état réel du code, l'historique des branches et la liste des problèmes connus.
+Home Assistant (HTTP → SQLite → MQTT Discovery). **Lire `ARCHITECTURE.md`** (schémas, flux,
+réglages liés entre passerelle et add-on) et **`CONTEXT.md`** (état réel du code, historique des
+branches, problèmes connus). Toute évolution d'architecture met à jour `ARCHITECTURE.md`.
 
 L'utilisateur échange en français ; code, commentaires et messages de commit en français.
 Un commit par fonctionnalité.
